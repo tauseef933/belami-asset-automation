@@ -7,6 +7,7 @@ import re
 import io
 from datetime import datetime
 from pathlib import Path
+import traceback
 
 # Page configuration
 st.set_page_config(
@@ -137,154 +138,289 @@ def get_brand_folder(vendor_name):
     vendor_lower = vendor_name.lower().strip()
     return brand_mapping.get(vendor_lower, vendor_lower.replace(' ', ''))
 
+def find_columns(df, patterns, column_type):
+    """Robust column finder that checks multiple patterns"""
+    found_cols = []
+    
+    for col in df.columns:
+        col_lower = str(col).lower().strip()
+        for pattern in patterns:
+            if pattern in col_lower:
+                found_cols.append(col)
+                break
+    
+    if not found_cols:
+        st.warning(f"⚠️ No {column_type} columns found automatically. Available columns:")
+        st.write(list(df.columns))
+    
+    return found_cols
+
 def process_vendor_file(vendor_file, template_file, mfg_mapping, vendor_name, mfg_prefix, brand_folder):
     """Process vendor file and create filled asset template"""
     
-    # Read vendor file
     try:
-        # Try common sheet names
-        sheet_names = ['Entities', 'All', 'Sheet1']
+        # Read vendor file - try multiple approaches
         vendor_df = None
+        sheet_used = None
         
-        for sheet_name in sheet_names:
-            try:
-                vendor_df = pd.read_excel(vendor_file, sheet_name=sheet_name)
-                break
-            except:
-                continue
+        # Get all sheet names first
+        try:
+            excel_file = pd.ExcelFile(vendor_file)
+            available_sheets = excel_file.sheet_names
+            st.info(f"📋 Available sheets: {', '.join(available_sheets)}")
+        except Exception as e:
+            return None, None, f"Error reading Excel file structure: {str(e)}"
         
+        # Try common sheet names in order
+        sheet_priority = ['Entities', 'entities', 'All', 'all', 'Sheet1', 'sheet1', 'Data', 'data']
+        
+        for sheet_name in sheet_priority:
+            if sheet_name in available_sheets:
+                try:
+                    vendor_df = pd.read_excel(vendor_file, sheet_name=sheet_name)
+                    sheet_used = sheet_name
+                    st.success(f"✓ Using sheet: {sheet_name}")
+                    break
+                except Exception as e:
+                    continue
+        
+        # If no priority sheet found, use first sheet
         if vendor_df is None:
-            # Try first sheet
-            vendor_df = pd.read_excel(vendor_file)
+            try:
+                vendor_df = pd.read_excel(vendor_file, sheet_name=0)
+                sheet_used = available_sheets[0]
+                st.success(f"✓ Using first sheet: {sheet_used}")
+            except Exception as e:
+                return None, None, f"Error reading Excel file: {str(e)}"
+        
+        # Display column information
+        st.info(f"📊 Found {len(vendor_df.columns)} columns and {len(vendor_df)} rows")
+        
+        with st.expander("Show all columns in vendor file"):
+            st.write(list(vendor_df.columns))
+        
+        # Find image columns with expanded patterns
+        image_patterns = [
+            'image', 'photo', 'picture', 'pic', 'img',
+            'url', 'link', 'path', 'file',
+            'media', 'asset', 'visual',
+            'main', 'primary', 'additional', 'alt',
+            'http', 'www', '.jpg', '.png', '.pdf'
+        ]
+        
+        image_cols = find_columns(vendor_df, image_patterns, "image")
+        
+        if not image_cols:
+            # Manual column selection
+            st.error("❌ Could not auto-detect image columns")
+            st.write("**Please select image columns manually:**")
+            return None, None, "No image columns detected. Please check your file format."
+        
+        st.success(f"✓ Found {len(image_cols)} image column(s): {', '.join(image_cols)}")
+        
+        # Find SKU columns with expanded patterns
+        sku_patterns = [
+            'sku', 'item', 'product', 'part', 'model',
+            'code', 'number', 'id', 'identifier',
+            'catalog', 'reference', 'style'
+        ]
+        
+        sku_cols = find_columns(vendor_df, sku_patterns, "SKU")
+        
+        if not sku_cols:
+            st.error("❌ Could not auto-detect SKU columns")
+            return None, None, "No SKU columns detected. Please check your file format."
+        
+        st.success(f"✓ Found SKU column: {sku_cols[0]}")
+        
+        # Initialize outputs
+        output_rows = []
+        flags = []
+        
+        # Statistics
+        total_rows = 0
+        skipped_rows = 0
+        processed_skus = 0
+        total_assets = 0
+        skipped_videos = 0
+        
+        # Process each row
+        main_image_count = 0
+        
+        for idx, row in vendor_df.iterrows():
+            total_rows += 1
             
-    except Exception as e:
-        return None, None, f"Error reading vendor file: {e}"
-    
-    # Initialize outputs
-    output_rows = []
-    flags = []
-    
-    # Find image and SKU columns
-    image_cols = [col for col in vendor_df.columns if 'image' in col.lower() or 'photo' in col.lower() or 'url' in col.lower()]
-    sku_cols = [col for col in vendor_df.columns if 'sku' in col.lower() or 'item' in col.lower() or 'product' in col.lower()]
-    
-    if not image_cols:
-        return None, None, "No image columns found in vendor file"
-    
-    if not sku_cols:
-        return None, None, "No SKU columns found in vendor file"
-    
-    # Process each row
-    main_image_count = 0
-    
-    for idx, row in vendor_df.iterrows():
-        sku = str(row[sku_cols[0]]) if pd.notna(row[sku_cols[0]]) else None
-        
-        if not sku or sku.lower() in ['nan', 'none', '']:
-            continue
-        
-        # Track images for this SKU
-        images_processed = []
-        is_first_image = True
-        
-        # Process all image columns
-        for img_col in image_cols:
-            img_value = row[img_col]
+            # Get SKU
+            sku = None
+            for sku_col in sku_cols:
+                if pd.notna(row[sku_col]):
+                    sku = str(row[sku_col]).strip()
+                    if sku and sku.lower() not in ['nan', 'none', '', 'null']:
+                        break
             
-            if pd.isna(img_value) or str(img_value).strip() == '':
+            if not sku:
+                skipped_rows += 1
                 continue
             
-            # Handle multiple images in one cell (separated by comma, semicolon, or newline)
-            img_urls = re.split(r'[,;\n]+', str(img_value))
+            processed_skus += 1
             
-            for img_url in img_urls:
-                img_url = img_url.strip()
+            # Track images for this SKU
+            images_processed = []
+            is_first_image = True
+            sku_asset_count = 0
+            
+            # Process all image columns
+            for img_col in image_cols:
+                if img_col not in row.index:
+                    continue
+                    
+                img_value = row[img_col]
                 
-                if not img_url:
+                if pd.isna(img_value) or str(img_value).strip() == '':
                     continue
                 
-                # Skip videos
-                if any(ext in img_url.lower() for ext in ['.mp4', '.mov', '.avi', '.wmv', 'youtube', 'vimeo']):
-                    flags.append(f"Skipped video for SKU {sku}: {img_url}")
-                    continue
+                # Handle multiple images in one cell (separated by various delimiters)
+                img_urls = re.split(r'[,;\n\r\|]+', str(img_value))
                 
-                # Extract filename from URL
-                filename = img_url.split('/')[-1] if '/' in img_url else img_url
-                
-                # Check if it's a PDF
-                is_pdf = filename.lower().endswith('.pdf')
-                
-                # Clean filename
-                clean_name = clean_filename(filename)
-                
-                # Determine asset type
-                if is_pdf:
-                    # Check if spec or install sheet
-                    if 'install' in filename.lower():
-                        asset_family = 'install_sheet'
-                        suffix = '_specs'  # Use specs suffix for PDFs
-                        path_folder = 'specsheets'
-                        extension = '.pdf'
-                    else:
-                        asset_family = 'spec_sheet'
-                        suffix = '_specs'
-                        path_folder = 'specsheets'
-                        extension = '.pdf'
+                for img_url in img_urls:
+                    img_url = img_url.strip()
                     
-                    mediatype_value = ''
+                    if not img_url or img_url.lower() in ['nan', 'none', 'null', '']:
+                        continue
                     
-                else:
-                    # Image file
-                    suffix = '_new_1k'
-                    extension = '.jpg'
+                    # Skip videos
+                    video_extensions = ['.mp4', '.mov', '.avi', '.wmv', '.flv', '.webm', '.mkv']
+                    video_sites = ['youtube', 'vimeo', 'youtu.be']
                     
-                    if is_first_image:
-                        asset_family = 'main_product_image'
-                        path_folder = 'products'
+                    is_video = False
+                    img_lower = img_url.lower()
+                    
+                    if any(ext in img_lower for ext in video_extensions):
+                        is_video = True
+                    if any(site in img_lower for site in video_sites):
+                        is_video = True
+                    
+                    if is_video:
+                        flags.append(f"⏭️ Skipped video for SKU {sku}: {img_url[:50]}...")
+                        skipped_videos += 1
+                        continue
+                    
+                    # Extract filename from URL or path
+                    # Handle various URL formats
+                    filename = img_url.split('/')[-1].split('\\')[-1]
+                    if '?' in filename:
+                        filename = filename.split('?')[0]
+                    
+                    # If no extension found, assume .jpg
+                    if '.' not in filename:
+                        filename = filename + '.jpg'
+                    
+                    # Check if it's a PDF
+                    is_pdf = filename.lower().endswith('.pdf')
+                    
+                    # Clean filename
+                    clean_name = clean_filename(filename)
+                    
+                    if not clean_name:
+                        flags.append(f"⚠️ Could not clean filename for SKU {sku}: {filename}")
+                        continue
+                    
+                    # Determine asset type
+                    if is_pdf:
+                        # Check if spec or install sheet
+                        if 'install' in filename.lower():
+                            asset_family = 'install_sheet'
+                            suffix = '_specs'
+                            path_folder = 'specsheets'
+                            extension = '.pdf'
+                        else:
+                            asset_family = 'spec_sheet'
+                            suffix = '_specs'
+                            path_folder = 'specsheets'
+                            extension = '.pdf'
+                        
                         mediatype_value = ''
-                        is_first_image = False
-                        main_image_count += 1
+                        
                     else:
-                        asset_family = 'media'
-                        path_folder = 'media'
-                        mediatype_value = determine_mediatype(filename, row)
-                
-                # Create code and label (identical and lowercase)
-                code_label = f"{mfg_prefix}_{clean_name}{suffix}"
-                
-                # Create product_reference
-                product_ref = f"{mfg_prefix}_{sku}"
-                
-                # Create imagelink (all lowercase)
-                imagelink = f"{brand_folder}/{path_folder}/{clean_name}_new{extension}".lower()
-                
-                # Check for duplicates
-                if code_label in images_processed:
-                    flags.append(f"Duplicate filename detected for SKU {sku}: {code_label}")
-                else:
-                    images_processed.append(code_label)
-                
-                # Add row
-                output_rows.append({
-                    'code': code_label,
-                    'label-en_US': code_label,
-                    'product_reference': product_ref,
-                    'imagelink': imagelink,
-                    'assetFamilyIdentifier': asset_family,
-                    'mediatype': mediatype_value
-                })
-    
-    # Create output DataFrame
-    output_df = pd.DataFrame(output_rows)
-    
-    # Validation checks
-    if main_image_count == 0:
-        flags.append("WARNING: No main product images found")
-    
-    # Create flags text
-    flags_text = "\n".join(flags) if flags else "No issues detected"
-    
-    return output_df, flags_text, None
+                        # Image file
+                        suffix = '_new_1k'
+                        extension = '.jpg'
+                        
+                        if is_first_image:
+                            asset_family = 'main_product_image'
+                            path_folder = 'products'
+                            mediatype_value = ''
+                            is_first_image = False
+                            main_image_count += 1
+                        else:
+                            asset_family = 'media'
+                            path_folder = 'media'
+                            mediatype_value = determine_mediatype(filename, row)
+                    
+                    # Create code and label (identical and lowercase)
+                    code_label = f"{mfg_prefix}_{clean_name}{suffix}"
+                    
+                    # Create product_reference
+                    product_ref = f"{mfg_prefix}_{sku}"
+                    
+                    # Create imagelink (all lowercase)
+                    imagelink = f"{brand_folder}/{path_folder}/{clean_name}_new{extension}".lower()
+                    
+                    # Check for duplicates
+                    if code_label in images_processed:
+                        flags.append(f"⚠️ Duplicate filename for SKU {sku}: {code_label}")
+                    else:
+                        images_processed.append(code_label)
+                    
+                    # Add row
+                    output_rows.append({
+                        'code': code_label,
+                        'label-en_US': code_label,
+                        'product_reference': product_ref,
+                        'imagelink': imagelink,
+                        'assetFamilyIdentifier': asset_family,
+                        'mediatype': mediatype_value
+                    })
+                    
+                    sku_asset_count += 1
+                    total_assets += 1
+            
+            if sku_asset_count == 0:
+                flags.append(f"⚠️ No assets found for SKU: {sku}")
+        
+        # Create output DataFrame
+        if not output_rows:
+            return None, None, "No assets were processed. Please check your vendor file format."
+        
+        output_df = pd.DataFrame(output_rows)
+        
+        # Add processing statistics
+        flags.insert(0, f"📊 Processing Summary:")
+        flags.insert(1, f"  • Total rows in file: {total_rows}")
+        flags.insert(2, f"  • SKUs processed: {processed_skus}")
+        flags.insert(3, f"  • Total assets created: {total_assets}")
+        flags.insert(4, f"  • Main images: {main_image_count}")
+        flags.insert(5, f"  • Videos skipped: {skipped_videos}")
+        flags.insert(6, f"  • Rows skipped (no SKU): {skipped_rows}")
+        flags.insert(7, "")
+        
+        # Validation checks
+        if main_image_count == 0:
+            flags.append("⚠️ WARNING: No main product images found")
+        
+        if main_image_count < processed_skus:
+            flags.append(f"⚠️ WARNING: Some SKUs missing main images ({main_image_count} main images for {processed_skus} SKUs)")
+        
+        # Create flags text
+        flags_text = "\n".join(flags) if flags else "No issues detected"
+        
+        return output_df, flags_text, None
+        
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        st.error("❌ Error during processing:")
+        st.code(error_trace)
+        return None, None, f"Processing error: {str(e)}\n\nFull trace:\n{error_trace}"
 
 # Main UI
 st.markdown('<div class="main-header">Belami Asset Template Automation</div>', unsafe_allow_html=True)
@@ -338,6 +474,16 @@ with col1:
         help="Excel file with vendor product data (usually 'Entities' or 'All' sheet)"
     )
     
+    # Show preview if file uploaded
+    if vendor_file:
+        try:
+            with st.expander("📋 Preview Vendor File (first 5 rows)"):
+                preview_df = pd.read_excel(vendor_file, sheet_name=0, nrows=5)
+                st.dataframe(preview_df, use_container_width=True)
+                st.caption(f"Columns: {', '.join(list(preview_df.columns))}")
+        except Exception as e:
+            st.error(f"Could not preview file: {e}")
+    
     # Upload template file
     template_file = st.file_uploader(
         "Upload Asset Template",
@@ -378,6 +524,32 @@ can_process = vendor_file and template_file and vendor_name and mfg_prefix and b
 
 if not can_process:
     st.warning("Please provide all required information and files before processing")
+
+# Add manual column selection option
+if vendor_file and not can_process:
+    try:
+        excel_file = pd.ExcelFile(vendor_file)
+        test_df = pd.read_excel(vendor_file, sheet_name=0, nrows=5)
+        
+        with st.expander("🔧 Advanced: Manual Column Selection"):
+            st.info("If automatic detection fails, you can manually select columns here")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                sku_column_manual = st.selectbox(
+                    "Select SKU Column",
+                    options=["Auto-detect"] + list(test_df.columns),
+                    help="Column containing product SKUs/Item numbers"
+                )
+            
+            with col2:
+                image_columns_manual = st.multiselect(
+                    "Select Image Columns",
+                    options=list(test_df.columns),
+                    help="Columns containing image URLs or filenames"
+                )
+    except:
+        pass
 
 if st.button("Generate Asset Template", disabled=not can_process, type="primary"):
     with st.spinner("Processing vendor data..."):
