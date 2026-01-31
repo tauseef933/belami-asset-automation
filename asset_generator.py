@@ -102,7 +102,7 @@ def show():
         except Exception as e:
             st.error(f"Error reading file: {e}")
     
-    # Status indicators - FIXED
+    # Status indicators
     st.markdown("---")
     st.markdown("### Status")
     
@@ -149,7 +149,7 @@ def show():
                 if error:
                     st.error(error)
                 else:
-                    st.success(f"Created {len(output_df)} assets successfully!")
+                    st.success(f"Created {len(output_df)} assets successfully")
                     
                     # Metrics
                     st.markdown("---")
@@ -211,21 +211,24 @@ def show():
                 st.code(traceback.format_exc())
 
 def find_sku_column(df):
-    """Find SKU column with flexible matching"""
+    """Find SKU column with flexible matching - handles any column type"""
     # Try exact matches first
     for col in df.columns:
-        if col == 'SKU':
+        # Convert to string to handle numeric column names
+        col_str = str(col)
+        if col_str == 'SKU':
             return col
     
     # Try case-insensitive matches
     for col in df.columns:
-        if col.upper() == 'SKU':
+        col_str = str(col)
+        if col_str.upper() == 'SKU':
             return col
     
     # Try partial matches
     for col in df.columns:
-        col_lower = str(col).lower()
-        if 'sku' in col_lower or 'item' in col_lower or 'product code' in col_lower:
+        col_str = str(col).lower()
+        if 'sku' in col_str or 'item' in col_str or 'product code' in col_str:
             return col
     
     return None
@@ -313,9 +316,16 @@ def process_vendor_file(df, mfg_prefix, brand_folder):
             # Get base filename without extension
             base_name = Path(filename).stem
             
-            # Create code (lowercase, cleaned) - iOS-safe regex
+            # Create code (lowercase, cleaned)
             code_clean = base_name.lower()
-            code_clean = re.sub(r'[^a-z0-9_\-]', '_', code_clean)
+            # Simple character replacement - no complex regex
+            code_clean = code_clean.replace(' ', '_')
+            code_clean = code_clean.replace(',', '_')
+            code_clean = code_clean.replace('/', '_')
+            code_clean = code_clean.replace('\\', '_')
+            # Remove any remaining special chars except underscore and hyphen
+            allowed_chars = 'abcdefghijklmnopqrstuvwxyz0123456789_-'
+            code_clean = ''.join(c if c in allowed_chars else '_' for c in code_clean)
             
             if is_pdf:
                 code = f"{mfg_prefix}_{code_clean}_specs"
