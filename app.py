@@ -7,7 +7,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Professional CSS - No emojis, clean corporate look
+# Simplified CSS - iOS compatible, no complex regex patterns
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -29,44 +29,6 @@ st.markdown("""
     max-width: 1400px;
 }
 
-/* Sidebar styling */
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-}
-
-[data-testid="stSidebar"] .css-1d391kg {
-    color: white;
-}
-
-[data-testid="stSidebar"] .stMarkdown {
-    color: white;
-}
-
-/* Radio buttons in sidebar */
-[data-testid="stSidebar"] .stRadio > label {
-    color: white;
-    font-weight: 600;
-    font-size: 1.1rem;
-}
-
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
-    background: rgba(255, 255, 255, 0.1);
-    padding: 0.75rem 1rem;
-    border-radius: 10px;
-    margin-bottom: 0.5rem;
-    cursor: pointer;
-    transition: all 0.3s;
-}
-
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label:hover {
-    background: rgba(255, 255, 255, 0.2);
-    transform: translateX(5px);
-}
-
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label div {
-    color: white !important;
-}
-
 .title {
     font-size: 2.5rem;
     font-weight: 700;
@@ -84,10 +46,48 @@ st.markdown("""
     font-size: 1.1rem;
 }
 
-/* Hide Streamlit branding */
+.stButton>button {
+    width: 100%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    font-weight: 600;
+    padding: 0.75rem;
+    border-radius: 10px;
+    border: none;
+}
+
+.stDownloadButton>button {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+}
+
+/* Sidebar styling */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+}
+
+section[data-testid="stSidebar"] .stMarkdown {
+    color: white;
+}
+
+section[data-testid="stSidebar"] label {
+    color: white;
+    font-weight: 600;
+}
+
+/* Hide branding */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .title {
+        font-size: 1.8rem;
+    }
+    .block-container {
+        padding: 1rem;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
