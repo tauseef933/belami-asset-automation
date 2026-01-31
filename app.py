@@ -7,7 +7,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Simplified CSS - iOS compatible, no complex regex patterns
+# Mobile-optimized CSS
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -46,18 +46,34 @@ st.markdown("""
     font-size: 1.1rem;
 }
 
+/* Button styling - larger for mobile */
 .stButton>button {
     width: 100%;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     font-weight: 600;
-    padding: 0.75rem;
+    padding: 1rem;
     border-radius: 10px;
     border: none;
+    font-size: 1rem;
+    min-height: 48px;
 }
 
 .stDownloadButton>button {
     background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    min-height: 48px;
+}
+
+/* File uploader - touch friendly */
+.stFileUploader {
+    min-height: 60px;
+}
+
+/* Text inputs - larger for mobile */
+.stTextInput input,
+.stSelectbox select {
+    min-height: 48px;
+    font-size: 16px;
 }
 
 /* Sidebar styling */
@@ -72,6 +88,19 @@ section[data-testid="stSidebar"] .stMarkdown {
 section[data-testid="stSidebar"] label {
     color: white;
     font-weight: 600;
+    font-size: 1rem;
+}
+
+/* Radio buttons - touch friendly */
+section[data-testid="stSidebar"] .stRadio > div {
+    padding: 0.5rem 0;
+}
+
+section[data-testid="stSidebar"] .stRadio label {
+    padding: 0.75rem 1rem;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
 }
 
 /* Hide branding */
@@ -84,8 +113,53 @@ header {visibility: hidden;}
     .title {
         font-size: 1.8rem;
     }
+    
+    .subtitle {
+        font-size: 0.95rem;
+    }
+    
     .block-container {
         padding: 1rem;
+        border-radius: 15px;
+    }
+    
+    .main {
+        padding: 1rem 0.5rem;
+    }
+    
+    /* Stack columns on mobile */
+    .row-widget.stHorizontal {
+        flex-direction: column;
+    }
+    
+    /* Larger touch targets */
+    .stButton>button,
+    .stDownloadButton>button {
+        min-height: 52px;
+        font-size: 1.05rem;
+    }
+}
+
+/* iOS specific fixes */
+@supports (-webkit-touch-callout: none) {
+    /* iOS Safari */
+    .stButton>button,
+    .stDownloadButton>button {
+        -webkit-appearance: none;
+        -webkit-tap-highlight-color: transparent;
+    }
+    
+    input,
+    select {
+        font-size: 16px;
+    }
+}
+
+/* Android specific */
+@media (pointer: coarse) {
+    /* Touch devices */
+    .stButton>button {
+        min-height: 52px;
     }
 }
 </style>
