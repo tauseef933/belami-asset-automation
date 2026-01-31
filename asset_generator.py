@@ -27,12 +27,8 @@ def show():
         st.session_state.selected_sheet = None
     
     # Configuration section
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                border-radius: 15px; padding: 1.5rem; color: white; margin-bottom: 1.5rem;">
-        <div style="font-size: 1.2rem; font-weight: 600; margin-bottom: 1rem;">Configuration</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("### Configuration")
+    st.markdown("---")
     
     col1, col2, col3 = st.columns(3)
     
@@ -67,12 +63,8 @@ def show():
         )
     
     # Upload section
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                border-radius: 15px; padding: 1.5rem; color: white; margin-bottom: 1.5rem;">
-        <div style="font-size: 1.2rem; font-weight: 600; margin-bottom: 1rem;">Upload Files</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("### Upload Files")
+    st.markdown("---")
     
     col1, col2 = st.columns(2)
     
@@ -110,38 +102,35 @@ def show():
         except Exception as e:
             st.error(f"Error reading file: {e}")
     
-    # Status indicators
+    # Status indicators - FIXED
     st.markdown("---")
-    col1, col2, col3, col4 = st.columns(4)
+    st.markdown("### Status")
     
-    status_style = """
-    <div style="display: inline-block; padding: 0.4rem 0.8rem; border-radius: 15px; 
-                font-weight: 600; font-size: 0.85rem; margin: 0.2rem;">
-    """
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         if vendor_name and mfg_prefix and brand_folder:
-            st.markdown(status_style + 'background: #d1fae5; color: #065f46;">Config Ready</div>', unsafe_allow_html=True)
+            st.success("Config Ready")
         else:
-            st.markdown(status_style + 'background: #fef3c7; color: #92400e;">Config Needed</div>', unsafe_allow_html=True)
+            st.warning("Config Needed")
     
     with col2:
         if vendor_file:
-            st.markdown(status_style + 'background: #d1fae5; color: #065f46;">File Uploaded</div>', unsafe_allow_html=True)
+            st.success("File Uploaded")
         else:
-            st.markdown(status_style + 'background: #fef3c7; color: #92400e;">Upload File</div>', unsafe_allow_html=True)
+            st.warning("Upload File")
     
     with col3:
         if selected_sheet:
-            st.markdown(status_style + 'background: #d1fae5; color: #065f46;">Sheet Selected</div>', unsafe_allow_html=True)
+            st.success("Sheet Selected")
         else:
-            st.markdown(status_style + 'background: #fef3c7; color: #92400e;">Select Sheet</div>', unsafe_allow_html=True)
+            st.warning("Select Sheet")
     
     with col4:
         if template_file:
-            st.markdown(status_style + 'background: #d1fae5; color: #065f46;">Template Ready</div>', unsafe_allow_html=True)
+            st.success("Template Ready")
         else:
-            st.markdown(status_style + 'background: #fef3c7; color: #92400e;">Upload Template</div>', unsafe_allow_html=True)
+            st.warning("Upload Template")
     
     # Process button
     st.markdown("---")
@@ -164,30 +153,24 @@ def show():
                     
                     # Metrics
                     st.markdown("---")
+                    st.markdown("### Results")
+                    
                     col1, col2, col3, col4 = st.columns(4)
                     
-                    metric_style = """
-                    <div style="background: #f9fafb; border-radius: 10px; padding: 1.5rem; 
-                                text-align: center; border: 2px solid #e5e7eb;">
-                        <div style="font-size: 2rem; font-weight: 700; color: #667eea;">{}</div>
-                        <div style="color: #6b7280; font-size: 0.9rem; margin-top: 0.5rem;">{}</div>
-                    </div>
-                    """
-                    
                     with col1:
-                        st.markdown(metric_style.format(len(output_df), "Total Assets"), unsafe_allow_html=True)
+                        st.metric("Total Assets", len(output_df))
                     
                     with col2:
                         main = len(output_df[output_df['assetFamilyIdentifier'] == 'main_product_image'])
-                        st.markdown(metric_style.format(main, "Main Images"), unsafe_allow_html=True)
+                        st.metric("Main Images", main)
                     
                     with col3:
                         media = len(output_df[output_df['assetFamilyIdentifier'] == 'media'])
-                        st.markdown(metric_style.format(media, "Media"), unsafe_allow_html=True)
+                        st.metric("Media", media)
                     
                     with col4:
                         pdfs = len(output_df[output_df['assetFamilyIdentifier'].isin(['spec_sheet', 'install_sheet'])])
-                        st.markdown(metric_style.format(pdfs, "PDFs"), unsafe_allow_html=True)
+                        st.metric("PDFs", pdfs)
                     
                     # Preview
                     with st.expander("Preview Data"):
@@ -195,6 +178,8 @@ def show():
                     
                     # Download
                     st.markdown("---")
+                    st.markdown("### Download")
+                    
                     col1, col2 = st.columns(2)
                     
                     with col1:
@@ -225,8 +210,34 @@ def show():
                 st.error(f"Error: {e}")
                 st.code(traceback.format_exc())
 
+def find_sku_column(df):
+    """Find SKU column with flexible matching"""
+    # Try exact matches first
+    for col in df.columns:
+        if col == 'SKU':
+            return col
+    
+    # Try case-insensitive matches
+    for col in df.columns:
+        if col.upper() == 'SKU':
+            return col
+    
+    # Try partial matches
+    for col in df.columns:
+        col_lower = str(col).lower()
+        if 'sku' in col_lower or 'item' in col_lower or 'product code' in col_lower:
+            return col
+    
+    return None
+
 def process_vendor_file(df, mfg_prefix, brand_folder):
     """Process vendor data to create asset template"""
+    
+    # Find SKU column
+    sku_column = find_sku_column(df)
+    
+    if not sku_column:
+        return None, None, "Could not find SKU column. Please ensure your file has a column named 'SKU' or similar."
     
     output_rows = []
     flags = []
@@ -271,7 +282,7 @@ def process_vendor_file(df, mfg_prefix, brand_folder):
     pdf_count = 0
     
     for idx, row in df.iterrows():
-        current_sku = str(row['SKU']) if pd.notna(row['SKU']) else None
+        current_sku = str(row[sku_column]) if pd.notna(row[sku_column]) else None
         
         if not current_sku or current_sku == 'nan':
             continue
@@ -302,9 +313,9 @@ def process_vendor_file(df, mfg_prefix, brand_folder):
             # Get base filename without extension
             base_name = Path(filename).stem
             
-            # Create code (lowercase, cleaned)
+            # Create code (lowercase, cleaned) - iOS-safe regex
             code_clean = base_name.lower()
-            code_clean = re.sub(r'[^a-z0-9_-]', '_', code_clean)
+            code_clean = re.sub(r'[^a-z0-9_\-]', '_', code_clean)
             
             if is_pdf:
                 code = f"{mfg_prefix}_{code_clean}_specs"
