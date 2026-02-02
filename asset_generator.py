@@ -75,6 +75,7 @@ def show():
     
     # Sheet selection
     selected_sheet = None
+    selected_header_row = None
     if vendor_file:
         try:
             excel_file = pd.ExcelFile(vendor_file)
@@ -101,12 +102,42 @@ def show():
         except Exception as e:
             st.error(f"Error reading file: {e}")
     
-    # SKU Column Selection - NEW FEATURE
-    sku_column_selected = None
+    # Header Row Selection - NEW FEATURE
     if vendor_file and selected_sheet:
         try:
-            # Read just to get columns
-            temp_df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=1, nrows=0)
+            st.markdown("---")
+            st.markdown("### Select Header Row")
+            st.write("**Which row contains the column names?**")
+            
+            # Read first 10 rows to show preview
+            preview_df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=None, nrows=10)
+            
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                header_row = st.selectbox(
+                    "Header Row Number",
+                    options=list(range(1, min(11, len(preview_df) + 1))),
+                    help="Select which row contains your column names (1-indexed)"
+                )
+                selected_header_row = header_row - 1  # Convert to 0-indexed for pandas
+            
+            # Show preview of what the columns will be
+            with col2:
+                st.info(f"Row {header_row} preview:")
+                preview_row = preview_df.iloc[selected_header_row].tolist()
+                preview_cols = [f"Col {i+1}: {str(v)[:25]}" for i, v in enumerate(preview_row[:5])]
+                st.write(", ".join(preview_cols) + "...")
+        
+        except Exception as e:
+            st.error(f"Error reading file preview: {e}")
+    
+    # SKU Column Selection - NEW FEATURE
+    sku_column_selected = None
+    if vendor_file and selected_sheet and selected_header_row is not None:
+        try:
+            # Read with the selected header row
+            temp_df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=selected_header_row, nrows=0)
             available_columns = [str(col) for col in temp_df.columns]
             
             st.markdown("---")
@@ -137,7 +168,7 @@ def show():
             
             # If auto-detected, show it
             if auto_detected:
-                st.info(f"Auto-detected SKU column: {auto_detected}")
+                st.info(f"✓ Auto-detected SKU column: **{auto_detected}**")
             
             col1, col2 = st.columns(2)
             
@@ -160,7 +191,7 @@ def show():
                     sku_column_selected = custom_sku_column
             
             if sku_column_selected:
-                st.success(f"Using SKU column: {sku_column_selected}")
+                st.success(f"✓ Using SKU column: **{sku_column_selected}**")
                 st.session_state.sku_column = sku_column_selected
         
         except Exception as e:
@@ -198,17 +229,20 @@ def show():
     
     # Process button
     st.markdown("---")
-    can_process = all([vendor_file, template_file, vendor_name, mfg_prefix, brand_folder, selected_sheet, sku_column_selected])
+    can_process = all([vendor_file, template_file, vendor_name, mfg_prefix, brand_folder, selected_sheet, sku_column_selected, selected_header_row is not None])
     
     if not sku_column_selected and vendor_file and selected_sheet:
         st.warning("Please select SKU column before processing")
     
+    if not selected_header_row and vendor_file and selected_sheet:
+        st.warning("Please select the header row before processing")
+    
     if st.button("Generate Asset Template", disabled=not can_process, use_container_width=True):
         with st.spinner("Processing..."):
             try:
-                # Read vendor data
-                df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=1)
-                st.info(f"Processing {len(df)} rows from: {selected_sheet}")
+                # Read vendor data with selected header row
+                df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=selected_header_row)
+                st.info(f"Processing {len(df)} rows from: {selected_sheet} (Header row: {selected_header_row + 1})")
                 
                 # Process
                 output_df, flags, error = process_vendor_file(df, mfg_prefix, brand_folder, sku_column_selected)
