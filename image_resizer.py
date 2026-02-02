@@ -10,20 +10,21 @@ def show():
     st.markdown('<div class="title">Image Resizer</div>', unsafe_allow_html=True)
     st.markdown('<div class="subtitle">Resize images to 1000x1000 with smart padding</div>', unsafe_allow_html=True)
     
-    # Info section
+    # Info section with better styling
     st.markdown("""
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                border-radius: 15px; padding: 1.5rem; color: white; margin-bottom: 1.5rem;">
-        <div style="font-size: 1.2rem; font-weight: 600; margin-bottom: 1rem;">How It Works</div>
-        <div style="font-size: 0.95rem; line-height: 1.6;">
-            Upload single or multiple images. All images will be resized to exactly 1000x1000 pixels 
-            while maintaining aspect ratio. Smart padding automatically detects and uses the background 
-            color from image edges.
+                border-radius: 15px; padding: 1.5rem; color: white; margin-bottom: 1.5rem;
+                box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);">
+        <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem;">✨ How It Works</div>
+        <div style="font-size: 0.95rem; line-height: 1.6; opacity: 0.95;">
+            📤 Upload single or multiple images. All images will be resized to exactly <strong>1000x1000 pixels</strong> 
+            while maintaining aspect ratio. Smart padding automatically detects and uses the background color from image edges.
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Upload section
+    # Upload section with improved styling
+    st.markdown("### 📁 Select Images")
     uploaded_files = st.file_uploader(
         "Upload Images",
         type=['png', 'jpg', 'jpeg', 'bmp', 'tiff'],
@@ -32,10 +33,10 @@ def show():
     )
     
     if uploaded_files:
-        st.info(f"Uploaded {len(uploaded_files)} image(s)")
+        st.info(f"✓ Uploaded {len(uploaded_files)} image(s)")
         
-        if st.button("Resize Images", use_container_width=True):
-            with st.spinner("Processing images..."):
+        if st.button("🚀 Resize Images", use_container_width=True, type="primary"):
+            with st.spinner("⏳ Processing images..."):
                 try:
                     # Create temporary directory
                     temp_dir = f"resized_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -84,16 +85,21 @@ def show():
                     progress_bar.empty()
                     status_text.empty()
                     
-                    st.success(f"Successfully resized {len(processed_files)} images!")
+                    st.success(f"✅ Successfully resized {len(processed_files)} images!")
                     
-                    # Create metrics
+                    # Create metrics with responsive design
+                    st.markdown("---")
+                    st.markdown("### 📊 Summary")
+                    
                     col1, col2, col3 = st.columns(3)
                     
                     metric_style = """
-                    <div style="background: #f9fafb; border-radius: 10px; padding: 1.5rem; 
-                                text-align: center; border: 2px solid #e5e7eb;">
-                        <div style="font-size: 2rem; font-weight: 700; color: #667eea;">{}</div>
-                        <div style="color: #6b7280; font-size: 0.9rem; margin-top: 0.5rem;">{}</div>
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                                border-radius: 12px; padding: 1.5rem; 
+                                text-align: center; border: none; color: white;
+                                box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);">
+                        <div style="font-size: 1.8rem; font-weight: 700;">{}</div>
+                        <div style="color: rgba(255,255,255,0.9); font-size: 0.85rem; margin-top: 0.5rem;">{}</div>
                     </div>
                     """
                     
@@ -101,7 +107,7 @@ def show():
                         st.markdown(metric_style.format(len(processed_files), "Images Processed"), unsafe_allow_html=True)
                     
                     with col2:
-                        st.markdown(metric_style.format("1000x1000", "Output Size"), unsafe_allow_html=True)
+                        st.markdown(metric_style.format("1000×1000", "Output Size"), unsafe_allow_html=True)
                     
                     with col3:
                         total_size = sum(os.path.getsize(f) for f in processed_files)
@@ -110,8 +116,8 @@ def show():
                     
                     st.markdown("---")
                     
-                    # Download options
-                    st.markdown("### Download Options")
+                    # Download options with better UI
+                    st.markdown("### ⬇️ Download Options")
                     
                     col1, col2 = st.columns(2)
                     
@@ -125,7 +131,7 @@ def show():
                         zip_buffer.seek(0)
                         
                         st.download_button(
-                            "Download All (ZIP)",
+                            "📦 Download All (ZIP)",
                             data=zip_buffer,
                             file_name=f"resized_images_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
                             mime="application/zip",
@@ -136,18 +142,20 @@ def show():
                         if len(processed_files) == 1:
                             with open(processed_files[0], 'rb') as f:
                                 st.download_button(
-                                    "Download Image",
+                                    "🖼️ Download Image",
                                     data=f.read(),
                                     file_name=os.path.basename(processed_files[0]),
                                     mime="image/jpeg",
                                     use_container_width=True
                                 )
+                        else:
+                            st.info("Download ZIP to get all images at once")
                     
-                    # Gallery preview
+                    # Gallery preview with responsive grid
                     st.markdown("---")
-                    st.markdown("### Preview Gallery")
+                    st.markdown("### 🖼️ Preview Gallery")
                     
-                    # Display images in grid
+                    # Responsive grid - show 4 on desktop, 2 on tablet, 1 on mobile
                     cols = st.columns(4)
                     for idx, img in enumerate(gallery_images):
                         with cols[idx % 4]:
@@ -162,7 +170,7 @@ def show():
                         pass
                 
                 except Exception as e:
-                    st.error(f"Error processing images: {e}")
+                    st.error(f"❌ Error processing images: {e}")
                     import traceback
                     st.code(traceback.format_exc())
 
