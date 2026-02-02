@@ -155,9 +155,49 @@ footer {visibility: hidden;}
     }
 }
 
-/* Prevent zoom on input focus on iOS */
-input, select, textarea {
+/* Prevent zoom on input focus - Critical for iPhone */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="tel"],
+input[type="date"],
+input[type="file"],
+select,
+textarea {
     font-size: 16px !important;
+    -webkit-user-select: text;
+}
+
+/* Better touch targets */
+.stButton > button,
+.stDownloadButton > button {
+    min-height: 44px !important;
+    min-width: 44px !important;
+}
+
+/* Fix iOS file picker */
+input[type="file"] {
+    padding: 10px !important;
+    border-radius: 8px !important;
+}
+
+/* Better spacing on mobile */
+@media (max-width: 640px) {
+    .block-container {
+        padding: 0.5rem 0.5rem !important;
+    }
+    
+    .stButton > button,
+    .stDownloadButton > button {
+        min-height: 48px !important;
+        font-size: 16px !important;
+        padding: 0.75rem 1rem !important;
+    }
+    
+    .stSelectbox,
+    .stTextInput {
+        margin-bottom: 0.5rem !important;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
