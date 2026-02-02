@@ -526,14 +526,34 @@ def show():
                 
                 # Manual adjustment section
                 st.markdown("---")
-                st.markdown("#### Manual Adjustment (Optional)")
-                st.write("If auto-detection missed any columns or made mistakes, you can add/edit them here:")
+                st.markdown("#### Column Management")
                 
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 
+                # Remove columns
                 with col1:
+                    st.write("**Remove Columns (Uncheck to exclude):**")
+                    columns_to_remove = []
+                    
+                    if detected_image_columns:
+                        st.write("*Images:*")
+                        for col_def in detected_image_columns:
+                            col_name = col_def['column_name']
+                            if not st.checkbox(f"  ✓ {col_name}", value=True, key=f"keep_img_{col_name}"):
+                                columns_to_remove.append(col_name)
+                    
+                    if detected_pdf_columns:
+                        st.write("*PDFs:*")
+                        for col_def in detected_pdf_columns:
+                            col_name = col_def['column_name']
+                            if not st.checkbox(f"  ✓ {col_name}", value=True, key=f"keep_pdf_{col_name}"):
+                                columns_to_remove.append(col_name)
+                
+                # Add columns
+                with col2:
+                    st.write("**Add Missing Columns:**")
                     additional_image_col = st.selectbox(
-                        "Add additional image column (optional)",
+                        "Add image column",
                         options=["-- None --"] + [c for c in available_columns if c not in [d['column_name'] for d in detected_image_columns]],
                         key="manual_image_col"
                     )
@@ -546,9 +566,9 @@ def show():
                             'reasoning': ['Manually added']
                         })
                 
-                with col2:
+                with col3:
                     additional_pdf_col = st.selectbox(
-                        "Add additional PDF column (optional)",
+                        "Add PDF column",
                         options=["-- None --"] + [c for c in available_columns if c not in [d['column_name'] for d in detected_pdf_columns]],
                         key="manual_pdf_col"
                     )
@@ -560,6 +580,10 @@ def show():
                             'category': 'document',
                             'reasoning': ['Manually added']
                         })
+                
+                # Remove unchecked columns
+                detected_image_columns = [d for d in detected_image_columns if d['column_name'] not in columns_to_remove]
+                detected_pdf_columns = [d for d in detected_pdf_columns if d['column_name'] not in columns_to_remove]
                 
                 st.session_state.detected_image_columns = detected_image_columns
                 st.session_state.detected_pdf_columns = detected_pdf_columns
@@ -707,18 +731,17 @@ def show():
 
 def process_vendor_file(df, mfg_prefix, brand_folder, sku_column, detected_image_cols=None, detected_pdf_cols=None):
     """
-    Process vendor data to create asset template using auto-detected columns.
+    Process vendor data following EXACT Belami Asset Template rules.
     
-    Args:
-        df: DataFrame with vendor data
-        mfg_prefix: Manufacturer ID prefix
-        brand_folder: Brand folder name
-        sku_column: Column containing SKU
-        detected_image_cols: List of detected image column definitions
-        detected_pdf_cols: List of detected PDF column definitions
+    Output columns (ONLY 6):
+    - code: manufacturer_prefix_filename_postfix (all lowercase)
+    - label-en_US: same as code
+    - product_reference: full SKU
+    - imagelink: full path with brand folder
+    - assetFamilyIdentifier: main_product_image, media, spec_sheet, install_sheet
+    - mediatype: lifestyle, dimension, detail, angle, informational, swatch (empty for main/spec/install)
     """
     
-    # Verify SKU column exists
     if sku_column not in df.columns:
         return None, None, f"SKU column '{sku_column}' not found in the data"
     
@@ -727,83 +750,52 @@ def process_vendor_file(df, mfg_prefix, brand_folder, sku_column, detected_image
     skipped_rows = []
     processed_skus = set()
     
-    # Build dynamic mapping from detected columns
+    # Build mappings from detected columns
     image_mappings = {}
-    
     if detected_image_cols:
         for col_def in detected_image_cols:
             col_name = col_def['column_name']
             category = col_def.get('category', 'media')
-            
-            # Map category to (assetFamily, folder, mediatype)
-            category_mappings = {
-                'main_product_image': ('main_product_image', 'products', ''),
-                'media': ('media', 'media', ''),
-                'media_lifestyle': ('media', 'media', 'lifestyle'),
-                'media_angle': ('media', 'media', 'angle'),
-                'media_infographic': ('media', 'media', 'informational'),
-                'media_dimension': ('media', 'media', 'dimension'),
-                'media_swatch': ('media', 'media', 'swatch'),
-                'media_thumbnail': ('media', 'media', 'thumbnail'),
-            }
-            
-            mapping = category_mappings.get(category, ('media', 'media', ''))
-            image_mappings[col_name] = mapping
+            image_mappings[col_name] = category
     
     pdf_mappings = {}
-    
     if detected_pdf_cols:
         for col_def in detected_pdf_cols:
             col_name = col_def['column_name']
             category = col_def.get('category', 'document')
-            
-            # Map category to (assetFamily, folder, mediatype)
-            pdf_category_mappings = {
-                'spec_sheet': ('spec_sheet', 'specsheets', ''),
-                'install_sheet': ('install_sheet', 'specsheets', ''),
-                'technical_drawing': ('technical_drawing', 'specsheets', ''),
-                'document': ('document', 'documents', ''),
-            }
-            
-            mapping = pdf_category_mappings.get(category, ('document', 'documents', ''))
-            pdf_mappings[col_name] = mapping
+            pdf_mappings[col_name] = category
     
     main_count = 0
     media_count = 0
-    pdf_count = 0
+    spec_count = 0
+    install_count = 0
     row_count = 0
-    images_processed = 0
-    pdfs_processed = 0
     
-    # Log what we're processing
-    flags.append(f"=== ASSET GENERATION REPORT ===")
-    flags.append(f"Detected Image Columns: {len(image_mappings)}")
-    for col_name in image_mappings:
-        flags.append(f"  • {col_name}")
-    flags.append(f"Detected PDF Columns: {len(pdf_mappings)}")
-    for col_name in pdf_mappings:
-        flags.append(f"  • {col_name}")
+    flags.append("=== BELAMI ASSET TEMPLATE GENERATION ===")
+    flags.append(f"Manufacturer Prefix: {mfg_prefix}")
+    flags.append(f"Brand Folder: {brand_folder}")
+    flags.append(f"Image Columns Detected: {len(image_mappings)}")
+    for col in image_mappings.keys():
+        flags.append(f"  • {col}")
+    flags.append(f"PDF Columns Detected: {len(pdf_mappings)}")
+    for col in pdf_mappings.keys():
+        flags.append(f"  • {col}")
     flags.append("")
     
-    # ADVANCED DATA READING - Process all rows and all columns
+    # Process each row
     for idx, row in df.iterrows():
         row_count += 1
         current_sku = None
-        row_has_data = False
         
-        # Extract SKU - handle various data types
+        # Extract and validate SKU
         try:
             sku_value = row[sku_column]
-            
-            # Skip null/empty values
             if pd.isna(sku_value):
                 skipped_rows.append(f"Row {idx+1}: SKU is empty")
                 continue
             
             current_sku = str(sku_value).strip()
-            
-            # Skip if empty after stripping
-            if not current_sku or current_sku.lower() == 'nan' or current_sku == '':
+            if not current_sku or current_sku.lower() == 'nan':
                 skipped_rows.append(f"Row {idx+1}: SKU is empty after cleaning")
                 continue
             
@@ -817,132 +809,180 @@ def process_vendor_file(df, mfg_prefix, brand_folder, sku_column, detected_image
             continue
         
         processed_skus.add(current_sku)
-        product_ref = f"{mfg_prefix}_{current_sku}"
         
-        # ===== PROCESS IMAGE COLUMNS =====
+        # Process image columns
+        first_image = True
         for col_name in image_mappings.keys():
             if col_name not in df.columns:
                 continue
             
-            asset_family, folder, mediatype = image_mappings[col_name]
-            
             try:
                 img_value = row[col_name]
-                
-                # Skip empty cells
-                if pd.isna(img_value) or str(img_value).strip() == '' or str(img_value).lower() == 'nan':
+                if pd.isna(img_value) or str(img_value).strip() == '':
                     continue
                 
-                row_has_data = True
                 filename = str(img_value).strip()
+                filename_lower = filename.lower()
                 
                 # Skip videos
-                if any(ext in filename.lower() for ext in ['.mp4', '.mov', '.avi', '.wmv', 'youtube', 'vimeo']):
-                    flags.append(f"Skipped video in {col_name}: {filename}")
+                if any(ext in filename_lower for ext in ['.mp4', '.mov', '.avi', '.wmv']) or 'youtube' in filename_lower or 'vimeo' in filename_lower:
                     continue
                 
                 # Get file extension
                 file_ext = Path(filename).suffix.lower()
-                
-                # Validate it's an image
                 valid_image_ext = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', '.svg']
+                
                 if file_ext not in valid_image_ext:
-                    flags.append(f"Skipped non-image file {col_name}: {filename}")
                     continue
                 
-                # Create asset row
-                output_rows.append({
-                    'Product Reference': product_ref,
-                    'assetFamilyIdentifier': asset_family,
-                    'storageLocation': f"{brand_folder}/{folder}",
-                    'mediaType': mediatype,
-                    'sequenceNumber': len([r for r in output_rows if r.get('Product Reference') == product_ref]) + 1,
-                    'assetFile': filename,
-                    'sourceColumn': col_name
-                })
+                # Get filename without extension (lowercase)
+                base_name = Path(filename).stem.lower()
                 
-                images_processed += 1
-                if asset_family == 'main_product_image':
+                # Clean filename (replace spaces/special chars with underscore)
+                special_chars = [' ', ',', '/', '\\', '(', ')', '[', ']', '{', '}', '&', '#', '@', '!', '*', '+', '=', '%', '$', '^', '~', '`', ';', ':', '"', "'", '<', '>', '?', '|', '.']
+                base_name_clean = base_name
+                for char in special_chars:
+                    base_name_clean = base_name_clean.replace(char, '_')
+                
+                # Remove multiple underscores
+                while '__' in base_name_clean:
+                    base_name_clean = base_name_clean.replace('__', '_')
+                base_name_clean = base_name_clean.strip('_')
+                
+                # Determine asset type
+                if first_image and image_mappings[col_name] != 'media_lifestyle':
+                    # First image is main product image
+                    asset_family = 'main_product_image'
+                    media_type = ''
+                    code = f"{mfg_prefix}_{base_name_clean}_new_1k"
+                    imagelink = f"{brand_folder}/products/{base_name_clean}_new_1k.jpg"
                     main_count += 1
+                    first_image = False
                 else:
+                    # Other images are media
+                    asset_family = 'media'
+                    
+                    # Map category to mediatype
+                    category = image_mappings[col_name]
+                    if category == 'media_lifestyle':
+                        media_type = 'lifestyle'
+                    elif category == 'media_angle':
+                        media_type = 'angle'
+                    elif category == 'media_infographic':
+                        media_type = 'informational'
+                    elif category == 'media_dimension':
+                        media_type = 'dimension'
+                    elif category == 'media_swatch':
+                        media_type = 'swatch'
+                    else:
+                        media_type = 'detail'
+                    
+                    code = f"{mfg_prefix}_{base_name_clean}_new_1k"
+                    imagelink = f"{brand_folder}/media/{base_name_clean}_new_1k.jpg"
                     media_count += 1
+                
+                # Create row with ONLY 6 columns
+                output_rows.append({
+                    'code': code,
+                    'label-en_US': code,
+                    'product_reference': current_sku,
+                    'imagelink': imagelink,
+                    'assetFamilyIdentifier': asset_family,
+                    'mediatype': media_type
+                })
             
             except Exception as e:
-                flags.append(f"Error processing {col_name} for SKU {current_sku}: {str(e)}")
+                flags.append(f"Error processing image column {col_name} for SKU {current_sku}: {str(e)}")
                 continue
         
-        # ===== PROCESS PDF COLUMNS =====
+        # Process PDF columns
         for col_name in pdf_mappings.keys():
             if col_name not in df.columns:
                 continue
             
-            asset_family, folder, mediatype = pdf_mappings[col_name]
-            
             try:
                 pdf_value = row[col_name]
-                
-                # Skip empty cells
-                if pd.isna(pdf_value) or str(pdf_value).strip() == '' or str(pdf_value).lower() == 'nan':
+                if pd.isna(pdf_value) or str(pdf_value).strip() == '':
                     continue
                 
-                row_has_data = True
                 filename = str(pdf_value).strip()
-                
-                # Get file extension
+                filename_lower = filename.lower()
                 file_ext = Path(filename).suffix.lower()
                 
-                # Validate it's a PDF
                 if file_ext != '.pdf':
-                    flags.append(f"Skipped non-PDF file {col_name}: {filename}")
                     continue
                 
-                # Create asset row
-                output_rows.append({
-                    'Product Reference': product_ref,
-                    'assetFamilyIdentifier': asset_family,
-                    'storageLocation': f"{brand_folder}/{folder}",
-                    'mediaType': mediatype,
-                    'sequenceNumber': len([r for r in output_rows if r.get('Product Reference') == product_ref and r['assetFamilyIdentifier'] == asset_family]) + 1,
-                    'assetFile': filename,
-                    'sourceColumn': col_name
-                })
+                # Get filename without extension (lowercase)
+                base_name = Path(filename).stem.lower()
                 
-                pdfs_processed += 1
-                pdf_count += 1
+                # Clean filename
+                special_chars = [' ', ',', '/', '\\', '(', ')', '[', ']', '{', '}', '&', '#', '@', '!', '*', '+', '=', '%', '$', '^', '~', '`', ';', ':', '"', "'", '<', '>', '?', '|', '.']
+                base_name_clean = base_name
+                for char in special_chars:
+                    base_name_clean = base_name_clean.replace(char, '_')
+                
+                while '__' in base_name_clean:
+                    base_name_clean = base_name_clean.replace('__', '_')
+                base_name_clean = base_name_clean.strip('_')
+                
+                # Determine PDF type
+                category = pdf_mappings[col_name]
+                if category == 'install_sheet':
+                    asset_family = 'install_sheet'
+                    spec_type = 'install_sheet'
+                    install_count += 1
+                elif category == 'technical_drawing':
+                    asset_family = 'spec_sheet'
+                    spec_type = 'spec_sheet'
+                    spec_count += 1
+                else:
+                    asset_family = 'spec_sheet'
+                    spec_type = 'spec_sheet'
+                    spec_count += 1
+                
+                code = f"{mfg_prefix}_{base_name_clean}_specs"
+                imagelink = f"{brand_folder}/specsheets/{base_name_clean}_new.pdf"
+                
+                # Create row with ONLY 6 columns
+                output_rows.append({
+                    'code': code,
+                    'label-en_US': code,
+                    'product_reference': current_sku,
+                    'imagelink': imagelink,
+                    'assetFamilyIdentifier': asset_family,
+                    'mediatype': ''
+                })
             
             except Exception as e:
-                flags.append(f"Error processing {col_name} for SKU {current_sku}: {str(e)}")
+                flags.append(f"Error processing PDF column {col_name} for SKU {current_sku}: {str(e)}")
                 continue
-        
-        # Track rows with no asset data
-        if not row_has_data:
-            skipped_rows.append(f"Row {idx+1} (SKU: {current_sku}): No image or PDF data found")
     
-    # Generate summary report
+    # Generate summary
     flags.append("")
     flags.append("=== PROCESSING SUMMARY ===")
     flags.append(f"Total rows processed: {row_count}")
-    flags.append(f"Rows with asset data: {len(processed_skus)}")
+    flags.append(f"SKUs with assets: {len(processed_skus)}")
     flags.append(f"Total assets created: {len(output_rows)}")
-    flags.append(f"  • Main images: {main_count}")
+    flags.append(f"  • Main product images: {main_count}")
     flags.append(f"  • Media assets: {media_count}")
-    flags.append(f"  • PDF documents: {pdf_count}")
-    flags.append(f"Total images processed: {images_processed}")
-    flags.append(f"Total PDFs processed: {pdfs_processed}")
+    flags.append(f"  • Spec sheets: {spec_count}")
+    flags.append(f"  • Install sheets: {install_count}")
     
     if skipped_rows:
         flags.append("")
         flags.append(f"=== SKIPPED ROWS ({len(skipped_rows)}) ===")
-        for skip in skipped_rows[:20]:  # Show first 20
+        for skip in skipped_rows[:15]:
             flags.append(skip)
-        if len(skipped_rows) > 20:
-            flags.append(f"... and {len(skipped_rows) - 20} more")
+        if len(skipped_rows) > 15:
+            flags.append(f"... and {len(skipped_rows) - 15} more")
     
-    # Create output DataFrame
+    # Create output DataFrame with ONLY 6 columns in correct order
     if output_rows:
         output_df = pd.DataFrame(output_rows)
+        output_df = output_df[['code', 'label-en_US', 'product_reference', 'imagelink', 'assetFamilyIdentifier', 'mediatype']]
     else:
-        output_df = pd.DataFrame(columns=['Product Reference', 'assetFamilyIdentifier', 'storageLocation', 'mediaType', 'sequenceNumber', 'assetFile', 'sourceColumn'])
+        output_df = pd.DataFrame(columns=['code', 'label-en_US', 'product_reference', 'imagelink', 'assetFamilyIdentifier', 'mediatype'])
     
     return output_df, "\n".join(flags), None
+
 
