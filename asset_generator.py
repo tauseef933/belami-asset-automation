@@ -115,38 +115,39 @@ def show():
             st.markdown("### Step 1: Select Header Row")
             st.write("Which row contains your column names?")
             
-            # Read first 20 rows to show preview
+            # Read first 20 rows
             preview_df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=None, nrows=20)
-            
-            # Show all rows with their content
-            row_options = {}
-            for i in range(len(preview_df)):
-                row_content = preview_df.iloc[i].head(3).tolist()
-                row_display = " | ".join([str(x)[:20] for x in row_content if pd.notna(x)])[:50]
-                row_options[f"Row {i+1}: {row_display}..."] = i
             
             col1, col2 = st.columns([1, 2])
             
             with col1:
-                selected_option = st.selectbox(
+                # Simple dropdown: just show row numbers
+                row_number = st.selectbox(
                     "Header Row",
-                    options=list(row_options.keys()),
+                    options=list(range(1, min(21, len(preview_df) + 1))),
+                    format_func=lambda x: f"Row {x}",
                     key="header_selector"
                 )
-                selected_header_row = row_options[selected_option]
+                selected_header_row = row_number - 1  # Convert to 0-indexed
                 st.session_state.selected_header_row = selected_header_row
             
-            # Preview the selected row
+            # Show what columns will be read
             with col2:
-                st.info(f"Column names from Row {selected_header_row + 1}:")
-                preview_row = preview_df.iloc[selected_header_row]
-                cols_preview = [str(c)[:30] for c in preview_row if pd.notna(c)]
-                st.write(", ".join(cols_preview[:5]))
-                if len(cols_preview) > 5:
-                    st.write(f"... and {len(cols_preview) - 5} more columns")
+                if selected_header_row is not None:
+                    try:
+                        temp_preview = pd.read_excel(
+                            vendor_file, 
+                            sheet_name=selected_sheet, 
+                            header=selected_header_row,
+                            nrows=1
+                        )
+                        col_count = len(temp_preview.columns)
+                        st.success(f"Row {row_number} selected - Found {col_count} columns")
+                    except:
+                        st.info(f"Row {row_number} selected")
         
         except Exception as e:
-            st.error(f"Error reading file preview: {e}")
+            st.error(f"Error reading file: {e}")
     
     # SKU Column Selection - DYNAMIC
     sku_column_selected = None
@@ -339,7 +340,7 @@ def show():
                 st.code(traceback.format_exc())
 
 def process_vendor_file(df, mfg_prefix, brand_folder, sku_column):
-    """Process vendor data to create asset template"""
+    """Process vendor data to create asset template - ROBUST VERSION"""
     
     # Verify SKU column exists
     if sku_column not in df.columns:
@@ -347,8 +348,10 @@ def process_vendor_file(df, mfg_prefix, brand_folder, sku_column):
     
     output_rows = []
     flags = []
+    skipped_rows = []
+    processed_skus = set()
     
-    # Image column mappings
+    # Image column mappings - comprehensive list
     image_mappings = {
         'Image File 1': ('main_product_image', 'products', ''),
         'Image File 2': ('media', 'media', 'angle'),
@@ -386,110 +389,132 @@ def process_vendor_file(df, mfg_prefix, brand_folder, sku_column):
     main_count = 0
     media_count = 0
     pdf_count = 0
+    row_count = 0
     
+    # ROBUST DATA READING - Handle all rows
     for idx, row in df.iterrows():
-        current_sku = str(row[sku_column]) if pd.notna(row[sku_column]) else None
+        row_count += 1
+        current_sku = None
         
-        if not current_sku or current_sku == 'nan':
+        # Extract SKU - handle various data types
+        try:
+            sku_value = row[sku_column]
+            
+            # Skip null/empty values
+            if pd.isna(sku_value):
+                skipped_rows.append(f"Row {idx+1}: SKU is empty")
+                continue
+            
+            current_sku = str(sku_value).strip()
+            
+            # Skip if empty after stripping
+            if not current_sku or current_sku.lower() == 'nan' or current_sku == '':
+                skipped_rows.append(f"Row {idx+1}: SKU is empty after cleaning")
+                continue
+            
+        except Exception as e:
+            skipped_rows.append(f"Row {idx+1}: Error reading SKU - {str(e)}")
             continue
         
+        # Skip duplicate SKUs
+        if current_sku in processed_skus:
+            skipped_rows.append(f"Row {idx+1}: Duplicate SKU {current_sku}")
+            continue
+        
+        processed_skus.add(current_sku)
         product_ref = f"{mfg_prefix}_{current_sku}"
         
-        # Process each image column
-        for col_name, (asset_family, folder, mediatype) in image_mappings.items():
-            if col_name not in row.index:
+        # Process EACH column in the file - don't skip any
+        for col_name in df.columns:
+            # Check if column exists in mappings
+            if col_name not in image_mappings:
                 continue
+            
+            asset_family, folder, mediatype = image_mappings[col_name]
+            
+            try:
+                img_value = row[col_name]
                 
-            img_value = row[col_name]
-            
-            if pd.isna(img_value) or str(img_value).strip() == '' or str(img_value) == 'nan':
-                continue
-            
-            filename = str(img_value).strip()
-            
-            # Skip videos
-            if any(ext in filename.lower() for ext in ['.mp4', '.mov', '.avi', '.wmv', 'youtube', 'vimeo']):
-                flags.append(f"Skipped video: {filename}")
-                continue
-            
-            # Get file extension
-            file_ext = Path(filename).suffix.lower()
-            is_pdf = file_ext == '.pdf'
-            
-            # Get base filename without extension
-            base_name = Path(filename).stem
-            
-            # Create code (lowercase, cleaned) - Simple replacement, no regex
-            code_clean = base_name.lower()
-            code_clean = code_clean.replace(' ', '_')
-            code_clean = code_clean.replace(',', '_')
-            code_clean = code_clean.replace('/', '_')
-            code_clean = code_clean.replace('\\', '_')
-            code_clean = code_clean.replace('(', '_')
-            code_clean = code_clean.replace(')', '_')
-            code_clean = code_clean.replace('[', '_')
-            code_clean = code_clean.replace(']', '_')
-            code_clean = code_clean.replace('{', '_')
-            code_clean = code_clean.replace('}', '_')
-            code_clean = code_clean.replace('&', '_')
-            code_clean = code_clean.replace('#', '_')
-            code_clean = code_clean.replace('@', '_')
-            code_clean = code_clean.replace('!', '_')
-            code_clean = code_clean.replace('*', '_')
-            code_clean = code_clean.replace('+', '_')
-            code_clean = code_clean.replace('=', '_')
-            code_clean = code_clean.replace('%', '_')
-            code_clean = code_clean.replace('$', '_')
-            code_clean = code_clean.replace('^', '_')
-            code_clean = code_clean.replace('~', '_')
-            code_clean = code_clean.replace('`', '_')
-            code_clean = code_clean.replace(';', '_')
-            code_clean = code_clean.replace(':', '_')
-            code_clean = code_clean.replace('"', '_')
-            code_clean = code_clean.replace("'", '_')
-            code_clean = code_clean.replace('<', '_')
-            code_clean = code_clean.replace('>', '_')
-            code_clean = code_clean.replace('?', '_')
-            code_clean = code_clean.replace('|', '_')
-            code_clean = code_clean.replace('.', '_')
-            
-            # Remove multiple underscores
-            while '__' in code_clean:
-                code_clean = code_clean.replace('__', '_')
-            
-            # Remove leading/trailing underscores
-            code_clean = code_clean.strip('_')
-            
-            if is_pdf:
-                code = f"{mfg_prefix}_{code_clean}_specs"
-                imagelink = f"{brand_folder}/{folder}/{base_name}_new.pdf"
-                pdf_count += 1
-            else:
-                code = f"{mfg_prefix}_{code_clean}_new_1k"
-                imagelink = f"{brand_folder}/{folder}/{base_name}_new_1k.jpg"
-                if asset_family == 'main_product_image':
-                    main_count += 1
+                # Skip empty cells
+                if pd.isna(img_value) or str(img_value).strip() == '' or str(img_value).lower() == 'nan':
+                    continue
+                
+                filename = str(img_value).strip()
+                
+                # Skip videos
+                if any(ext in filename.lower() for ext in ['.mp4', '.mov', '.avi', '.wmv', 'youtube', 'vimeo']):
+                    flags.append(f"Skipped video in {col_name}: {filename}")
+                    continue
+                
+                # Get file extension
+                file_ext = Path(filename).suffix.lower()
+                is_pdf = file_ext == '.pdf'
+                
+                # Get base filename without extension
+                base_name = Path(filename).stem
+                
+                # Create code (lowercase, cleaned)
+                code_clean = base_name.lower()
+                
+                # Remove special characters
+                special_chars = [' ', ',', '/', '\\', '(', ')', '[', ']', '{', '}', 
+                                '&', '#', '@', '!', '*', '+', '=', '%', '$', '^', 
+                                '~', '`', ';', ':', '"', "'", '<', '>', '?', '|', '.']
+                
+                for char in special_chars:
+                    code_clean = code_clean.replace(char, '_')
+                
+                # Remove multiple underscores
+                while '__' in code_clean:
+                    code_clean = code_clean.replace('__', '_')
+                
+                # Remove leading/trailing underscores
+                code_clean = code_clean.strip('_')
+                
+                if is_pdf:
+                    code = f"{mfg_prefix}_{code_clean}_specs"
+                    imagelink = f"{brand_folder}/{folder}/{base_name}_new.pdf"
+                    pdf_count += 1
                 else:
-                    media_count += 1
+                    code = f"{mfg_prefix}_{code_clean}_new_1k"
+                    imagelink = f"{brand_folder}/{folder}/{base_name}_new_1k.jpg"
+                    if asset_family == 'main_product_image':
+                        main_count += 1
+                    else:
+                        media_count += 1
+                
+                # Add row
+                output_rows.append({
+                    'code': code,
+                    'label-en_US': code,
+                    'product_reference': product_ref,
+                    'imagelink': imagelink,
+                    'assetFamilyIdentifier': asset_family,
+                    'mediatype': mediatype if mediatype else ''
+                })
             
-            # Add row
-            output_rows.append({
-                'code': code,
-                'label-en_US': code,
-                'product_reference': product_ref,
-                'imagelink': imagelink,
-                'assetFamilyIdentifier': asset_family,
-                'mediatype': mediatype if mediatype else ''
-            })
+            except Exception as e:
+                flags.append(f"Error processing {col_name} in row {idx+1}: {str(e)}")
+                continue
     
     if not output_rows:
         return None, None, "No images found in vendor file"
     
     output_df = pd.DataFrame(output_rows)
     
-    flags.insert(0, f"Main images: {main_count}")
-    flags.insert(1, f"Media images: {media_count}")
-    flags.insert(2, f"PDFs: {pdf_count}")
-    flags.insert(3, f"Total assets: {len(output_df)}")
+    # Build flags report
+    flags.insert(0, f"Total rows processed: {row_count}")
+    flags.insert(1, f"Rows with data: {len(processed_skus)}")
+    flags.insert(2, f"Main images: {main_count}")
+    flags.insert(3, f"Media images: {media_count}")
+    flags.insert(4, f"PDFs: {pdf_count}")
+    flags.insert(5, f"Total assets generated: {len(output_df)}")
+    
+    if skipped_rows:
+        flags.append(f"\nSkipped {len(skipped_rows)} rows:")
+        for skip in skipped_rows[:10]:  # Show first 10
+            flags.append(f"  - {skip}")
+        if len(skipped_rows) > 10:
+            flags.append(f"  ... and {len(skipped_rows) - 10} more")
     
     return output_df, "\n".join(flags), None
