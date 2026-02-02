@@ -21,11 +21,15 @@ def show():
     
     mfg_mapping, vendor_list = load_manufacturer_mapping()
     
-    # Session state
+    # Session state for better state management
     if 'selected_sheet' not in st.session_state:
         st.session_state.selected_sheet = None
+    if 'selected_header_row' not in st.session_state:
+        st.session_state.selected_header_row = None
     if 'sku_column' not in st.session_state:
         st.session_state.sku_column = None
+    if 'available_columns' not in st.session_state:
+        st.session_state.available_columns = []
     
     # Configuration section
     st.markdown("### Configuration")
@@ -75,7 +79,6 @@ def show():
     
     # Sheet selection
     selected_sheet = None
-    selected_header_row = None
     if vendor_file:
         try:
             excel_file = pd.ExcelFile(vendor_file)
@@ -91,6 +94,8 @@ def show():
                         button_type = "primary" if st.session_state.selected_sheet == sheet else "secondary"
                         if st.button(sheet, key=f"sheet_{idx}", use_container_width=True, type=button_type):
                             st.session_state.selected_sheet = sheet
+                            st.session_state.selected_header_row = None  # Reset header row
+                            st.session_state.sku_column = None  # Reset SKU column
                             st.rerun()
                 
                 if st.session_state.selected_sheet:
@@ -102,50 +107,68 @@ def show():
         except Exception as e:
             st.error(f"Error reading file: {e}")
     
-    # Header Row Selection - NEW FEATURE
+    # Header Row Selection - IMPROVED
+    selected_header_row = None
     if vendor_file and selected_sheet:
         try:
             st.markdown("---")
-            st.markdown("### Select Header Row")
-            st.write("**Which row contains the column names?**")
+            st.markdown("### Step 1: Select Header Row")
+            st.write("Which row contains your column names?")
             
-            # Read first 10 rows to show preview
-            preview_df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=None, nrows=10)
+            # Read first 20 rows to show preview
+            preview_df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=None, nrows=20)
+            
+            # Show all rows with their content
+            row_options = {}
+            for i in range(len(preview_df)):
+                row_content = preview_df.iloc[i].head(3).tolist()
+                row_display = " | ".join([str(x)[:20] for x in row_content if pd.notna(x)])[:50]
+                row_options[f"Row {i+1}: {row_display}..."] = i
             
             col1, col2 = st.columns([1, 2])
             
             with col1:
-                header_row = st.selectbox(
-                    "Header Row Number",
-                    options=list(range(1, min(11, len(preview_df) + 1))),
-                    help="Select which row contains your column names (1-indexed)"
+                selected_option = st.selectbox(
+                    "Header Row",
+                    options=list(row_options.keys()),
+                    key="header_selector"
                 )
-                selected_header_row = header_row - 1  # Convert to 0-indexed for pandas
+                selected_header_row = row_options[selected_option]
+                st.session_state.selected_header_row = selected_header_row
             
-            # Show preview of what the columns will be
+            # Preview the selected row
             with col2:
-                st.info(f"Row {header_row} preview:")
-                preview_row = preview_df.iloc[selected_header_row].tolist()
-                preview_cols = [f"Col {i+1}: {str(v)[:25]}" for i, v in enumerate(preview_row[:5])]
-                st.write(", ".join(preview_cols) + "...")
+                st.info(f"Column names from Row {selected_header_row + 1}:")
+                preview_row = preview_df.iloc[selected_header_row]
+                cols_preview = [str(c)[:30] for c in preview_row if pd.notna(c)]
+                st.write(", ".join(cols_preview[:5]))
+                if len(cols_preview) > 5:
+                    st.write(f"... and {len(cols_preview) - 5} more columns")
         
         except Exception as e:
             st.error(f"Error reading file preview: {e}")
     
-    # SKU Column Selection - NEW FEATURE
+    # SKU Column Selection - DYNAMIC
     sku_column_selected = None
-    if vendor_file and selected_sheet and selected_header_row is not None:
+    if vendor_file and selected_sheet and st.session_state.selected_header_row is not None:
         try:
-            # Read with the selected header row
-            temp_df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=selected_header_row, nrows=0)
-            available_columns = [str(col) for col in temp_df.columns]
-            
             st.markdown("---")
-            st.markdown("### Select SKU Column")
+            st.markdown("### Step 2: Select SKU Column")
+            st.write("Which column contains the product SKU/Item Number?")
+            
+            # Read with the selected header row to get actual columns
+            temp_df = pd.read_excel(
+                vendor_file, 
+                sheet_name=selected_sheet, 
+                header=st.session_state.selected_header_row, 
+                nrows=0
+            )
+            available_columns = [str(col) for col in temp_df.columns]
+            st.session_state.available_columns = available_columns
             
             # Common SKU column names for auto-detection
             common_sku_names = [
-                'SKU', 'sku', 'Sku',
+                'SKU', 'sku', 'Sku', 'SKU Number',
                 'Model Number', 'model_number', 'Model_Number', 'MODEL_NUMBER',
                 'Item Number', 'item_number', 'Item_Number', 'ITEM_NUMBER',
                 'Item Num', 'item_num', 'Item_Num',
@@ -166,33 +189,29 @@ def show():
                     auto_detected = common_name
                     break
             
-            # If auto-detected, show it
-            if auto_detected:
-                st.info(f"✓ Auto-detected SKU column: **{auto_detected}**")
-            
             col1, col2 = st.columns(2)
             
             with col1:
-                # Dropdown selector
+                # Dropdown with ONLY actual columns from file
+                default_index = 0
+                if auto_detected and auto_detected in available_columns:
+                    default_index = available_columns.index(auto_detected) + 1
+                
                 sku_column_selected = st.selectbox(
-                    "Select SKU Column from Dropdown",
-                    options=[""] + available_columns,
-                    index=available_columns.index(auto_detected) + 1 if auto_detected else 0
-                )
-            
-            with col2:
-                # Manual input
-                custom_sku_column = st.text_input(
-                    "Or Enter Custom Column Name",
-                    placeholder="Type exact column name"
+                    "Select SKU Column",
+                    options=["-- Select Column --"] + available_columns,
+                    index=default_index,
+                    help="Choose the column that contains product identifiers"
                 )
                 
-                if custom_sku_column:
-                    sku_column_selected = custom_sku_column
+                if sku_column_selected != "-- Select Column --":
+                    st.session_state.sku_column = sku_column_selected
+                else:
+                    sku_column_selected = None
             
-            if sku_column_selected:
-                st.success(f"✓ Using SKU column: **{sku_column_selected}**")
-                st.session_state.sku_column = sku_column_selected
+            with col2:
+                st.info(f"Total columns found: {len(available_columns)}")
+                st.write("Auto-detect: " + (f"Detected '{auto_detected}'" if auto_detected else "No match found"))
         
         except Exception as e:
             st.error(f"Error reading columns: {e}")
@@ -205,44 +224,51 @@ def show():
     
     with col1:
         if vendor_name and mfg_prefix and brand_folder:
-            st.success("Config Ready")
+            st.success("Config: Ready")
         else:
-            st.warning("Config Needed")
+            st.warning("Config: Incomplete")
     
     with col2:
         if vendor_file:
-            st.success("File Uploaded")
+            st.success("File: Uploaded")
         else:
-            st.warning("Upload File")
+            st.warning("File: Missing")
     
     with col3:
         if selected_sheet:
-            st.success("Sheet Selected")
+            st.success("Sheet: Selected")
         else:
-            st.warning("Select Sheet")
+            st.warning("Sheet: Select")
     
     with col4:
         if template_file:
-            st.success("Template Ready")
+            st.success("Template: Ready")
         else:
-            st.warning("Upload Template")
+            st.warning("Template: Missing")
     
     # Process button
     st.markdown("---")
-    can_process = all([vendor_file, template_file, vendor_name, mfg_prefix, brand_folder, selected_sheet, sku_column_selected, selected_header_row is not None])
+    can_process = all([
+        vendor_file, 
+        template_file, 
+        vendor_name, 
+        mfg_prefix, 
+        brand_folder, 
+        selected_sheet, 
+        sku_column_selected and sku_column_selected != "-- Select Column --",
+        st.session_state.selected_header_row is not None
+    ])
     
-    if not sku_column_selected and vendor_file and selected_sheet:
-        st.warning("Please select SKU column before processing")
-    
-    if not selected_header_row and vendor_file and selected_sheet:
-        st.warning("Please select the header row before processing")
-    
-    if st.button("Generate Asset Template", disabled=not can_process, use_container_width=True):
+    if st.button("Generate Asset Template", disabled=not can_process, use_container_width=True, type="primary"):
         with st.spinner("Processing..."):
             try:
                 # Read vendor data with selected header row
-                df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=selected_header_row)
-                st.info(f"Processing {len(df)} rows from: {selected_sheet} (Header row: {selected_header_row + 1})")
+                df = pd.read_excel(
+                    vendor_file, 
+                    sheet_name=selected_sheet, 
+                    header=st.session_state.selected_header_row
+                )
+                st.info(f"Processing {len(df)} rows from: {selected_sheet} (Header row: {st.session_state.selected_header_row + 1})")
                 
                 # Process
                 output_df, flags, error = process_vendor_file(df, mfg_prefix, brand_folder, sku_column_selected)
@@ -267,19 +293,19 @@ def show():
                     
                     with col3:
                         media = len(output_df[output_df['assetFamilyIdentifier'] == 'media'])
-                        st.metric("Media", media)
+                        st.metric("Media Assets", media)
                     
                     with col4:
                         pdfs = len(output_df[output_df['assetFamilyIdentifier'].isin(['spec_sheet', 'install_sheet'])])
-                        st.metric("PDFs", pdfs)
+                        st.metric("Documents", pdfs)
                     
                     # Preview
-                    with st.expander("Preview Data"):
+                    with st.expander("View Generated Data"):
                         st.dataframe(output_df.head(20), use_container_width=True)
                     
                     # Download
                     st.markdown("---")
-                    st.markdown("### Download")
+                    st.markdown("### Download Results")
                     
                     col1, col2 = st.columns(2)
                     
@@ -290,17 +316,18 @@ def show():
                         output_excel.seek(0)
                         
                         st.download_button(
-                            "Download Asset Template",
+                            "Download Asset Template (Excel)",
                             data=output_excel,
                             file_name=f"{vendor_name}_Asset_Template.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
+                            use_container_width=True,
+                            type="primary"
                         )
                     
                     with col2:
                         log = f"Processing Log - {vendor_name}\n{'='*50}\n{flags}"
                         st.download_button(
-                            "Download Log",
+                            "Download Log (Text)",
                             data=log,
                             file_name=f"{vendor_name}_log.txt",
                             mime="text/plain",
