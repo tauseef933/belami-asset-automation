@@ -3,7 +3,6 @@ import pandas as pd
 import io
 from pathlib import Path
 import traceback
-import re
 
 def show():
     st.markdown('<div class="title">Asset Template Generator</div>', unsafe_allow_html=True)
@@ -25,6 +24,8 @@ def show():
     # Session state
     if 'selected_sheet' not in st.session_state:
         st.session_state.selected_sheet = None
+    if 'sku_column' not in st.session_state:
+        st.session_state.sku_column = None
     
     # Configuration section
     st.markdown("### Configuration")
@@ -33,13 +34,11 @@ def show():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        # Vendor dropdown
         if vendor_list:
             vendor_name = st.selectbox(
                 "Vendor Name",
                 options=[""] + vendor_list,
-                index=0,
-                help="Select vendor from list"
+                index=0
             )
         else:
             vendor_name = st.text_input("Vendor Name", placeholder="AFX")
@@ -102,6 +101,71 @@ def show():
         except Exception as e:
             st.error(f"Error reading file: {e}")
     
+    # SKU Column Selection - NEW FEATURE
+    sku_column_selected = None
+    if vendor_file and selected_sheet:
+        try:
+            # Read just to get columns
+            temp_df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=1, nrows=0)
+            available_columns = [str(col) for col in temp_df.columns]
+            
+            st.markdown("---")
+            st.markdown("### Select SKU Column")
+            
+            # Common SKU column names for auto-detection
+            common_sku_names = [
+                'SKU', 'sku', 'Sku',
+                'Model Number', 'model_number', 'Model_Number', 'MODEL_NUMBER',
+                'Item Number', 'item_number', 'Item_Number', 'ITEM_NUMBER',
+                'Item Num', 'item_num', 'Item_Num',
+                'Product Code', 'product_code', 'Product_Code',
+                'Product Number', 'product_number',
+                'Part Number', 'part_number', 'Part_Number',
+                'Item Code', 'item_code', 'Item_Code',
+                'Article Number', 'article_number',
+                'Catalog Number', 'catalog_number',
+                'Material Number', 'material_number',
+                'Style Number', 'style_number'
+            ]
+            
+            # Try to auto-detect
+            auto_detected = None
+            for common_name in common_sku_names:
+                if common_name in available_columns:
+                    auto_detected = common_name
+                    break
+            
+            # If auto-detected, show it
+            if auto_detected:
+                st.info(f"Auto-detected SKU column: {auto_detected}")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Dropdown selector
+                sku_column_selected = st.selectbox(
+                    "Select SKU Column from Dropdown",
+                    options=[""] + available_columns,
+                    index=available_columns.index(auto_detected) + 1 if auto_detected else 0
+                )
+            
+            with col2:
+                # Manual input
+                custom_sku_column = st.text_input(
+                    "Or Enter Custom Column Name",
+                    placeholder="Type exact column name"
+                )
+                
+                if custom_sku_column:
+                    sku_column_selected = custom_sku_column
+            
+            if sku_column_selected:
+                st.success(f"Using SKU column: {sku_column_selected}")
+                st.session_state.sku_column = sku_column_selected
+        
+        except Exception as e:
+            st.error(f"Error reading columns: {e}")
+    
     # Status indicators
     st.markdown("---")
     st.markdown("### Status")
@@ -134,7 +198,10 @@ def show():
     
     # Process button
     st.markdown("---")
-    can_process = all([vendor_file, template_file, vendor_name, mfg_prefix, brand_folder, selected_sheet])
+    can_process = all([vendor_file, template_file, vendor_name, mfg_prefix, brand_folder, selected_sheet, sku_column_selected])
+    
+    if not sku_column_selected and vendor_file and selected_sheet:
+        st.warning("Please select SKU column before processing")
     
     if st.button("Generate Asset Template", disabled=not can_process, use_container_width=True):
         with st.spinner("Processing..."):
@@ -144,7 +211,7 @@ def show():
                 st.info(f"Processing {len(df)} rows from: {selected_sheet}")
                 
                 # Process
-                output_df, flags, error = process_vendor_file(df, mfg_prefix, brand_folder)
+                output_df, flags, error = process_vendor_file(df, mfg_prefix, brand_folder, sku_column_selected)
                 
                 if error:
                     st.error(error)
@@ -210,37 +277,12 @@ def show():
                 st.error(f"Error: {e}")
                 st.code(traceback.format_exc())
 
-def find_sku_column(df):
-    """Find SKU column with flexible matching - handles any column type"""
-    # Try exact matches first
-    for col in df.columns:
-        # Convert to string to handle numeric column names
-        col_str = str(col)
-        if col_str == 'SKU':
-            return col
-    
-    # Try case-insensitive matches
-    for col in df.columns:
-        col_str = str(col)
-        if col_str.upper() == 'SKU':
-            return col
-    
-    # Try partial matches
-    for col in df.columns:
-        col_str = str(col).lower()
-        if 'sku' in col_str or 'item' in col_str or 'product code' in col_str:
-            return col
-    
-    return None
-
-def process_vendor_file(df, mfg_prefix, brand_folder):
+def process_vendor_file(df, mfg_prefix, brand_folder, sku_column):
     """Process vendor data to create asset template"""
     
-    # Find SKU column
-    sku_column = find_sku_column(df)
-    
-    if not sku_column:
-        return None, None, "Could not find SKU column. Please ensure your file has a column named 'SKU' or similar."
+    # Verify SKU column exists
+    if sku_column not in df.columns:
+        return None, None, f"SKU column '{sku_column}' not found in the data"
     
     output_rows = []
     flags = []
@@ -316,16 +358,46 @@ def process_vendor_file(df, mfg_prefix, brand_folder):
             # Get base filename without extension
             base_name = Path(filename).stem
             
-            # Create code (lowercase, cleaned)
+            # Create code (lowercase, cleaned) - Simple replacement, no regex
             code_clean = base_name.lower()
-            # Simple character replacement - no complex regex
             code_clean = code_clean.replace(' ', '_')
             code_clean = code_clean.replace(',', '_')
             code_clean = code_clean.replace('/', '_')
             code_clean = code_clean.replace('\\', '_')
-            # Remove any remaining special chars except underscore and hyphen
-            allowed_chars = 'abcdefghijklmnopqrstuvwxyz0123456789_-'
-            code_clean = ''.join(c if c in allowed_chars else '_' for c in code_clean)
+            code_clean = code_clean.replace('(', '_')
+            code_clean = code_clean.replace(')', '_')
+            code_clean = code_clean.replace('[', '_')
+            code_clean = code_clean.replace(']', '_')
+            code_clean = code_clean.replace('{', '_')
+            code_clean = code_clean.replace('}', '_')
+            code_clean = code_clean.replace('&', '_')
+            code_clean = code_clean.replace('#', '_')
+            code_clean = code_clean.replace('@', '_')
+            code_clean = code_clean.replace('!', '_')
+            code_clean = code_clean.replace('*', '_')
+            code_clean = code_clean.replace('+', '_')
+            code_clean = code_clean.replace('=', '_')
+            code_clean = code_clean.replace('%', '_')
+            code_clean = code_clean.replace('$', '_')
+            code_clean = code_clean.replace('^', '_')
+            code_clean = code_clean.replace('~', '_')
+            code_clean = code_clean.replace('`', '_')
+            code_clean = code_clean.replace(';', '_')
+            code_clean = code_clean.replace(':', '_')
+            code_clean = code_clean.replace('"', '_')
+            code_clean = code_clean.replace("'", '_')
+            code_clean = code_clean.replace('<', '_')
+            code_clean = code_clean.replace('>', '_')
+            code_clean = code_clean.replace('?', '_')
+            code_clean = code_clean.replace('|', '_')
+            code_clean = code_clean.replace('.', '_')
+            
+            # Remove multiple underscores
+            while '__' in code_clean:
+                code_clean = code_clean.replace('__', '_')
+            
+            # Remove leading/trailing underscores
+            code_clean = code_clean.strip('_')
             
             if is_pdf:
                 code = f"{mfg_prefix}_{code_clean}_specs"
