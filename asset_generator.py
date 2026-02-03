@@ -3,986 +3,564 @@ import pandas as pd
 import io
 from pathlib import Path
 import traceback
-import re
-from collections import defaultdict
 
-# ============================================================================
-# ADVANCED COLUMN DETECTION SYSTEM - Enterprise Level
-# ============================================================================
 
-class AdvancedColumnDetector:
-    """
-    Advanced intelligent column detection system that identifies image and PDF
-    columns with high accuracy across various vendor formats and naming conventions.
-    """
-    
-    def __init__(self):
-        # Image-related keywords with weight scores (higher = more confident)
-        self.image_keywords = {
-            'image': 10, 'photo': 10, 'picture': 9, 'pic': 8,
-            'visual': 8, 'graphic': 8, 'asset': 7, 'artwork': 9,
-            'illustration': 8, 'diagram': 7, 'sketch': 7, 'render': 9,
-            'product': 6, 'main': 5, 'primary': 5, 'hero': 7,
-            'thumbnail': 8, 'thumb': 7, 'lifestyle': 8, 'lifestyle_image': 10,
-            'angle': 6, 'gallery': 7, 'carousel': 7, 'media': 7,
-            'visual_asset': 10, 'product_image': 10, 'file_path': 6,
-            'url': 5, 'link': 4, 'href': 4, 'swatch': 9, 'sample': 6,
-            'model': 6, 'photo_1': 9, 'photo_2': 9, 'img': 7,
-            'infographic': 10, 'bb_image': 10, 'dimension': 8
-        }
-        
-        # PDF-related keywords
-        self.pdf_keywords = {
-            'pdf': 10, 'spec': 9, 'sheet': 8, 'spec_sheet': 10,
-            'datasheet': 10, 'specification': 9, 'document': 7,
-            'catalog': 9, 'manual': 8, 'guide': 7, 'drawing': 8,
-            'diagram': 7, 'blueprint': 9, 'installation': 9,
-            'assembly': 9, 'instruction': 8, 'doc': 6,
-            'technical': 8, 'brochure': 8, 'flyer': 7
-        }
-        
-        # File extensions for validation
-        self.image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', '.svg'}
-        self.pdf_extensions = {'.pdf'}
-        
-    def analyze_column(self, col_name, col_data_sample):
-        """
-        Analyze a single column and return detection result with confidence score.
-        
-        Returns: {
-            'column_name': str,
-            'type': 'image' | 'pdf' | 'other',
-            'confidence': float (0-100),
-            'category': str (main_product_image, media, spec_sheet, etc),
-            'reasoning': str (explanation of detection)
-        }
-        """
-        col_lower = col_name.lower()
-        result = {
-            'column_name': col_name,
-            'type': 'other',
-            'confidence': 0,
-            'category': None,
-            'reasoning': []
-        }
-        
-        # ===== STEP 1: Analyze Column Name =====
-        name_score_image = 0
-        name_score_pdf = 0
-        name_reason = []
-        
-        # Check for keyword matches in column name
-        words = re.split(r'[\s_\-\.\(\\)/]', col_lower)
-        
-        for word in words:
-            if word in self.image_keywords:
-                score = self.image_keywords[word]
-                name_score_image += score
-                name_reason.append(f"Image keyword '{word}' (+{score})")
-            elif word in self.pdf_keywords:
-                score = self.pdf_keywords[word]
-                name_score_pdf += score
-                name_reason.append(f"PDF keyword '{word}' (+{score})")
-        
-        # Check for numeric patterns (Image 1, Photo 2, etc)
-        if re.search(r'\d+', col_lower):
-            if any(kw in col_lower for kw in ['image', 'photo', 'pic', 'file']):
-                name_score_image += 5
-                name_reason.append("Numeric pattern with image keyword (+5)")
-        
-        # ===== STEP 2: Analyze Column Data =====
-        data_score_image = 0
-        data_score_pdf = 0
-        data_reason = []
-        
-        valid_samples = [str(v).strip() for v in col_data_sample if pd.notna(v) and str(v).strip()]
-        
-        if valid_samples:
-            # Check for file paths and extensions
-            extension_matches_image = 0
-            extension_matches_pdf = 0
-            url_pattern_count = 0
-            
-            for sample in valid_samples[:10]:  # Check first 10 samples
-                sample_lower = sample.lower()
-                
-                # Check for common file patterns
-                if any(sample_lower.endswith(ext) for ext in self.image_extensions):
-                    extension_matches_image += 1
-                    data_score_image += 8
-                    
-                if any(sample_lower.endswith(ext) for ext in self.pdf_extensions):
-                    extension_matches_pdf += 1
-                    data_score_pdf += 8
-                
-                # Check for URL patterns
-                if any(domain in sample_lower for domain in ['http://', 'https://', 'www.', '.com', '.net', '.org']):
-                    url_pattern_count += 1
-                    data_score_image += 4
-                
-                # Check for file path patterns
-                if any(sep in sample for sep in ['/', '\\']) and len(sample) > 5:
-                    data_score_image += 5
-                    data_reason.append(f"File path pattern detected: {sample[:40]}...")
-            
-            if extension_matches_image > 0:
-                data_reason.append(f"Found {extension_matches_image} image file(s)")
-            if extension_matches_pdf > 0:
-                data_reason.append(f"Found {extension_matches_pdf} PDF file(s)")
-            if url_pattern_count > 0:
-                data_reason.append(f"Found {url_pattern_count} URL pattern(s)")
-            
-            # Data quality score (higher if more non-null values)
-            data_quality = len(valid_samples) / len(col_data_sample)
-            if data_quality > 0.5:
-                data_score_image += 5
-                data_score_pdf += 5
-                data_reason.append(f"Good data quality ({len(valid_samples)}/{len(col_data_sample)} filled)")
-        
-        # ===== STEP 3: Determine Final Classification =====
-        total_image_score = name_score_image + data_score_image
-        total_pdf_score = name_score_pdf + data_score_pdf
-        
-        # Normalize to 0-100 confidence
-        if total_image_score > total_pdf_score and total_image_score > 10:
-            result['type'] = 'image'
-            result['confidence'] = min(100, (total_image_score / 20) * 100)
-            result['reasoning'] = name_reason + data_reason
-            result['category'] = self._categorize_image_column(col_lower)
-            
-        elif total_pdf_score > total_image_score and total_pdf_score > 10:
-            result['type'] = 'pdf'
-            result['confidence'] = min(100, (total_pdf_score / 20) * 100)
-            result['reasoning'] = name_reason + data_reason
-            result['category'] = self._categorize_pdf_column(col_lower)
-        
-        return result
-    
-    def _categorize_image_column(self, col_lower):
-        """Categorize detected image column into specific type"""
-        
-        if any(x in col_lower for x in ['main', 'primary', 'hero', 'product_image']):
-            return 'main_product_image'
-        elif any(x in col_lower for x in ['thumbnail', 'thumb']):
-            return 'media_thumbnail'
-        elif any(x in col_lower for x in ['lifestyle', 'lifestyle_image']):
-            return 'media_lifestyle'
-        elif any(x in col_lower for x in ['angle', 'bb_image', 'b/b']):
-            return 'media_angle'
-        elif any(x in col_lower for x in ['infographic', 'info']):
-            return 'media_infographic'
-        elif any(x in col_lower for x in ['diagram', 'dimension', 'dimensional']):
-            return 'media_dimension'
-        elif any(x in col_lower for x in ['swatch', 'color']):
-            return 'media_swatch'
+# ---------------------------------------------------------------------------
+# EXACT column-to-output mapping derived from your filled template.
+# Key:   column name as it appears in vendor files (the "filename" columns,
+#        NOT the duplicate "URL" columns).
+# Value: (assetFamilyIdentifier, folder, mediatype)
+#        folder  -> products | media | specsheets
+#        mediatype -> lifestyle | angle | informational | dimension | swatch | detail | "" (empty)
+# ---------------------------------------------------------------------------
+KNOWN_IMAGE_COLUMNS = {
+    # ── main product image ────────────────────────────────────────────────
+    "Image File 1":                        ("main_product_image", "products",    ""),
+
+    # ── additional product angles ─────────────────────────────────────────
+    "Image File 2":                        ("media", "media", "angle"),
+    "Image File 3":                        ("media", "media", "angle"),
+
+    # ── lifestyle / application shots ─────────────────────────────────────
+    "Lifestyle Image 1":                   ("media", "media", "lifestyle"),
+    "Lifestyle Image 2":                   ("media", "media", "lifestyle"),
+    "Lifestyle Image 3":                   ("media", "media", "lifestyle"),
+
+    # ── box / beauty shots ────────────────────────────────────────────────
+    "B/B Image 1":                         ("media", "media", "angle"),
+    "B/B Image 2":                         ("media", "media", "angle"),
+    "B/B Image 3":                         ("media", "media", "angle"),
+    "B/B Image Dimensional":               ("media", "media", "dimension"),
+
+    # ── swatch images ─────────────────────────────────────────────────────
+    "Swatch Image 1":                      ("media", "media", "swatch"),
+    "Swatch Image 2":                      ("media", "media", "swatch"),
+    "Swatch Image 3":                      ("media", "media", "swatch"),
+    "Swatch Image 4":                      ("media", "media", "swatch"),
+
+    # ── infographics ──────────────────────────────────────────────────────
+    "Infographic Image 1":                 ("media", "media", "informational"),
+    "Infographic Image 2":                 ("media", "media", "informational"),
+    "Infographic Image 3":                 ("media", "media", "informational"),
+    "Infographic Image 4":                 ("media", "media", "informational"),
+    "Infographic Image 5":                 ("media", "media", "informational"),
+    "Infographic Image 6":                 ("media", "media", "informational"),
+    "Infographic Image 7":                 ("media", "media", "informational"),
+    "Infographic Image 8":                 ("media", "media", "informational"),
+    "Infographic Image 9":                 ("media", "media", "informational"),
+    "Infographic Image 10":                ("media", "media", "informational"),
+    "Infographic Image 11":                ("media", "media", "informational"),
+    "Infographic Image 12":                ("media", "media", "informational"),
+
+    # ── diagrams / dimensions ─────────────────────────────────────────────
+    "Diagram Image 1":                     ("media", "media", "dimension"),
+    "Diagram Image 2":                     ("media", "media", "dimension"),
+    "Diagram Image 3":                     ("media", "media", "dimension"),
+    "Diagram Image 4":                     ("media", "media", "dimension"),
+
+    # ── sketches ──────────────────────────────────────────────────────────
+    "Sketch Image":                        ("media", "media", "detail"),
+
+    # ── 3-D renders ───────────────────────────────────────────────────────
+    "3 Dimensional Image 1":               ("media", "media", "detail"),
+    "3 Dimensional Image 2":               ("media", "media", "detail"),
+    "3 Dimensional Image 3":               ("media", "media", "detail"),
+    "3 Dimensional Image 4":               ("media", "media", "detail"),
+    "3 Dimensional Image 5":               ("media", "media", "detail"),
+    "3 Dimensional Image 6":               ("media", "media", "detail"),
+    "3 Dimensional Image 7":               ("media", "media", "detail"),
+    "3 Dimensional Image 8":               ("media", "media", "detail"),
+    "3 Dimensional Image 9":               ("media", "media", "detail"),
+
+    # ── spec / install PDFs ───────────────────────────────────────────────
+    "Spec Sheet Image":                    ("spec_sheet",   "specsheets", ""),
+    "Installation/Assembly Image 1":       ("install_sheet","specsheets", ""),
+    "Installation/Assembly Image 2":       ("install_sheet","specsheets", ""),
+    "Installation/Assembly Image 3":       ("install_sheet","specsheets", ""),
+
+    # ── collection / care / energy / material / dimmer / warranty ─────────
+    "Collection Image":                    ("media", "media", "detail"),
+    "Care Guide Image":                    ("media", "media", "detail"),
+    "Energy Label Image":                  ("media", "media", "detail"),
+    "Collection Spec Sheet Image 1":       ("spec_sheet",   "specsheets", ""),
+    "Material Statements Image 1":         ("media", "media", "detail"),
+    "Material Statements Image 2":         ("media", "media", "detail"),
+    "Dimmer Sheet Image":                  ("spec_sheet",   "specsheets", ""),
+    "Warranty Image 1":                    ("media", "media", "detail"),
+    "Warranty Image 2":                    ("media", "media", "detail"),
+
+    # ── brand / product videos (kept as-is, no _new_1k) ──────────────────
+    "Video 1":                             ("media", "media", "detail"),
+    "Video 2":                             ("media", "media", "detail"),
+    "Video 3":                             ("media", "media", "detail"),
+    "Brand Video 1":                       ("media", "media", "detail"),
+}
+
+# ---------------------------------------------------------------------------
+# All plausible names a vendor might use for the SKU / product-id column.
+# Detection is case-insensitive.  User can also type a custom name.
+# ---------------------------------------------------------------------------
+SKU_COLUMN_CANDIDATES = [
+    "sku", "item number", "item_number", "item num", "item_num",
+    "model number", "model_number", "model no", "model_no",
+    "product code", "product_code", "product number", "product_number",
+    "part number", "part_number", "part no", "part_no",
+    "item code", "item_code", "article number", "article_number",
+    "catalog number", "catalog_number", "material number", "material_number",
+    "style number", "style_number", "style no", "style_no",
+    "upc", "gtin", "barcode", "bar code",
+    "product id", "product_id", "item id", "item_id",
+    "sku number", "sku_number", "sku no", "sku_no",
+    "reference", "ref", "code", "identifier",
+    "asin", "mfg part", "mfg_part", "manufacturer part",
+    "vendor sku", "vendor_sku", "supplier sku", "supplier_sku",
+]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _clean_code(raw_name: str) -> str:
+    """Lowercase + replace every non-alphanumeric char with underscore, collapse runs."""
+    out = []
+    for ch in raw_name.lower():
+        if ch.isalnum() or ch == '_':
+            out.append(ch)
         else:
-            return 'media'
-    
-    def _categorize_pdf_column(self, col_lower):
-        """Categorize detected PDF column into specific type"""
-        
-        if any(x in col_lower for x in ['spec', 'datasheet', 'specification']):
-            return 'spec_sheet'
-        elif any(x in col_lower for x in ['installation', 'assembly', 'instruction']):
-            return 'install_sheet'
-        elif any(x in col_lower for x in ['diagram', 'drawing', 'blueprint']):
-            return 'technical_drawing'
-        else:
-            return 'document'
-    
-    def detect_all_columns(self, df):
-        """
-        Detect all image and PDF columns in dataframe.
-        
-        Returns: {
-            'detected_columns': list of detection results,
-            'summary': {
-                'images': count,
-                'pdfs': count,
-                'total': count,
-                'confidence_avg': float
-            }
-        }
-        """
-        detected = []
-        
-        for col_name in df.columns:
-            # Sample up to 10 non-null values from column
-            col_data = df[col_name].dropna().head(10)
-            
-            # Skip if column is mostly empty
-            if len(col_data) == 0:
-                continue
-            
-            analysis = self.analyze_column(col_name, col_data)
-            
-            # Only include if it's a detected type with confidence > 30%
-            if analysis['type'] in ['image', 'pdf'] and analysis['confidence'] > 30:
-                detected.append(analysis)
-        
-        # Sort by confidence (highest first)
-        detected.sort(key=lambda x: x['confidence'], reverse=True)
-        
-        # Generate summary
-        image_cols = [d for d in detected if d['type'] == 'image']
-        pdf_cols = [d for d in detected if d['type'] == 'pdf']
-        avg_confidence = sum(d['confidence'] for d in detected) / len(detected) if detected else 0
-        
-        return {
-            'detected_columns': detected,
-            'summary': {
-                'images': len(image_cols),
-                'pdfs': len(pdf_cols),
-                'total': len(detected),
-                'confidence_avg': round(avg_confidence, 1)
-            }
-        }
+            out.append('_')
+    result = ''.join(out)
+    # collapse multiple underscores
+    while '__' in result:
+        result = result.replace('__', '_')
+    return result.strip('_')
 
-# Initialize detector
-detector = AdvancedColumnDetector()
 
+def _is_video(filename: str) -> bool:
+    ext = Path(filename).suffix.lower()
+    return ext in ('.mp4', '.mov', '.avi', '.wmv', '.webm') or 'youtube' in filename.lower() or 'vimeo' in filename.lower()
+
+
+def _is_pdf(filename: str) -> bool:
+    return Path(filename).suffix.lower() == '.pdf'
+
+
+def _auto_detect_sku(columns: list) -> str:
+    """Return the first column whose lowered name matches a known SKU candidate, or empty string."""
+    col_lower_map = {str(c).lower(): str(c) for c in columns}
+    for candidate in SKU_COLUMN_CANDIDATES:
+        if candidate in col_lower_map:
+            return col_lower_map[candidate]
+    return ""
+
+
+def _columns_present(df, known_map: dict) -> list:
+    """Return only the keys from known_map that actually exist in df.columns."""
+    df_cols = set(str(c) for c in df.columns)
+    return [k for k in known_map if k in df_cols]
+
+
+# ---------------------------------------------------------------------------
+# UI
+# ---------------------------------------------------------------------------
 def show():
     st.markdown('<div class="title">Asset Template Generator</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitle">Professional asset template automation</div>', unsafe_allow_html=True)
-    
-    # Load manufacturer mapping
+    st.markdown('<div class="subtitle">Generates Belami-compliant asset templates from any vendor file</div>', unsafe_allow_html=True)
+
+    # ── manufacturer list ─────────────────────────────────────────────────
     @st.cache_data
-    def load_manufacturer_mapping():
+    def _load_mfg():
         try:
-            df = pd.read_excel('Manufacturer_ID_s.xlsx')
-            mapping = dict(zip(df['Brand'].str.strip(), df['Manu ID'].astype(str)))
-            vendor_list = sorted(df['Brand'].str.strip().tolist())
-            return mapping, vendor_list
-        except:
+            df = pd.read_excel("Manufacturer_ID_s.xlsx")
+            mapping = dict(zip(df["Brand"].str.strip(), df["Manu ID"].astype(str)))
+            vendors = sorted(df["Brand"].str.strip().tolist())
+            return mapping, vendors
+        except Exception:
             return {}, []
-    
-    mfg_mapping, vendor_list = load_manufacturer_mapping()
-    
-    # Session state for better state management
-    if 'selected_sheet' not in st.session_state:
-        st.session_state.selected_sheet = None
-    if 'selected_header_row' not in st.session_state:
-        st.session_state.selected_header_row = None
-    if 'sku_column' not in st.session_state:
-        st.session_state.sku_column = None
-    if 'available_columns' not in st.session_state:
-        st.session_state.available_columns = []
-    
-    # Configuration section
+
+    mfg_mapping, vendor_list = _load_mfg()
+
+    # ── session state init ────────────────────────────────────────────────
+    for key in ("selected_sheet", "header_row"):
+        if key not in st.session_state:
+            st.session_state[key] = None
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SECTION 1 – Configuration
+    # ══════════════════════════════════════════════════════════════════════
     st.markdown("### Configuration")
     st.markdown("---")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if vendor_list:
-            vendor_name = st.selectbox(
-                "Vendor Name",
-                options=[""] + vendor_list,
-                index=0
-            )
-        else:
-            vendor_name = st.text_input("Vendor Name", placeholder="AFX")
-    
-    with col2:
-        suggested = ""
-        if vendor_name and vendor_name in mfg_mapping:
-            suggested = mfg_mapping[vendor_name]
-        
-        mfg_prefix = st.text_input(
-            "Manufacturer ID",
-            value=suggested,
-            placeholder="2605"
-        )
-    
-    with col3:
-        brand_folder = st.text_input(
-            "Brand Folder",
-            value=vendor_name.lower().replace(' ', '') if vendor_name else "",
-            placeholder="afx"
-        )
-    
-    # Upload section
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        vendor_name = st.selectbox("Vendor Name", [""] + vendor_list) if vendor_list else st.text_input("Vendor Name")
+
+    with c2:
+        mfg_prefix = st.text_input("Manufacturer ID",
+                                   value=mfg_mapping.get(vendor_name, "") if vendor_name else "",
+                                   placeholder="2605")
+
+    with c3:
+        brand_folder = st.text_input("Brand Folder",
+                                     value=vendor_name.lower().replace(" ", "") if vendor_name else "",
+                                     placeholder="afx")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SECTION 2 – Upload
+    # ══════════════════════════════════════════════════════════════════════
     st.markdown("### Upload Files")
     st.markdown("---")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        vendor_file = st.file_uploader("Vendor Data File", type=['xlsx', 'xls'])
-    
-    with col2:
-        template_file = st.file_uploader("Asset Template", type=['xlsx'])
-    
-    # Sheet selection
+    c1, c2 = st.columns(2)
+    with c1:
+        vendor_file = st.file_uploader("Vendor Data File", type=["xlsx", "xls"])
+    with c2:
+        template_file = st.file_uploader("Asset Template (empty)", type=["xlsx"])
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SECTION 3 – Sheet selection
+    # ══════════════════════════════════════════════════════════════════════
     selected_sheet = None
     if vendor_file:
         try:
-            excel_file = pd.ExcelFile(vendor_file)
-            sheets = excel_file.sheet_names
-            
+            xls = pd.ExcelFile(vendor_file)
+            sheets = xls.sheet_names
+
             if len(sheets) > 1:
                 st.markdown("---")
-                st.markdown("### Select Data Sheet")
-                
+                st.markdown("### Select Sheet")
                 cols = st.columns(min(len(sheets), 5))
-                for idx, sheet in enumerate(sheets):
-                    with cols[idx % 5]:
-                        button_type = "primary" if st.session_state.selected_sheet == sheet else "secondary"
-                        if st.button(sheet, key=f"sheet_{idx}", use_container_width=True, type=button_type):
-                            st.session_state.selected_sheet = sheet
-                            st.session_state.selected_header_row = None  # Reset header row
-                            st.session_state.sku_column = None  # Reset SKU column
+                for i, s in enumerate(sheets):
+                    with cols[i % 5]:
+                        btn_type = "primary" if st.session_state.selected_sheet == s else "secondary"
+                        if st.button(s, key=f"sh_{i}", use_container_width=True, type=btn_type):
+                            st.session_state.selected_sheet = s
+                            st.session_state.header_row = None       # reset downstream
                             st.rerun()
-                
                 if st.session_state.selected_sheet:
                     selected_sheet = st.session_state.selected_sheet
                     st.success(f"Selected: {selected_sheet}")
             else:
                 selected_sheet = sheets[0]
                 st.session_state.selected_sheet = selected_sheet
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
-    
-    # Header Row Selection - IMPROVED
-    selected_header_row = None
+        except Exception as exc:
+            st.error(f"Error reading file: {exc}")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SECTION 4 – Header-row picker  (most vendor files use row 2 = index 1)
+    # ══════════════════════════════════════════════════════════════════════
+    header_row = None           # 0-based index that pandas will use
     if vendor_file and selected_sheet:
+        st.markdown("---")
+        st.markdown("### Select Header Row")
+
+        # read first 5 raw rows so user can see which row has the column names
         try:
-            st.markdown("---")
-            st.markdown("### Step 1: Select Header Row")
-            st.write("Which row contains your column names?")
-            
-            # Read first 20 rows
-            preview_df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=None, nrows=20)
-            
-            col1, col2 = st.columns([1, 2])
-            
-            with col1:
-                # Simple dropdown: just show row numbers
-                row_number = st.selectbox(
-                    "Header Row",
-                    options=list(range(1, min(21, len(preview_df) + 1))),
-                    format_func=lambda x: f"Row {x}",
-                    key="header_selector"
+            preview = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=None, nrows=5)
+            st.markdown("First 5 rows of the sheet (pick the row that has column names):")
+            st.dataframe(preview, use_container_width=True)
+        except Exception:
+            pass
+
+        row_pick = st.selectbox(
+            "Which row number contains column headers?",
+            options=list(range(1, 6)),
+            format_func=lambda x: f"Row {x}",
+            index=1,          # default Row 2 (index 1) – correct for most vendor files
+            key="hdr_pick"
+        )
+        header_row = row_pick - 1          # pandas header= is 0-based
+        st.session_state.header_row = header_row
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SECTION 5 – SKU column selector
+    # ══════════════════════════════════════════════════════════════════════
+    sku_col = None
+    df_columns = []                        # keep reference for later use
+
+    if vendor_file and selected_sheet and header_row is not None:
+        st.markdown("---")
+        st.markdown("### Select SKU Column")
+        try:
+            # read 0 data-rows just to get column list
+            tmp = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=header_row, nrows=0)
+            df_columns = [str(c) for c in tmp.columns]
+
+            auto = _auto_detect_sku(df_columns)
+            if auto:
+                st.success(f"Auto-detected SKU column: {auto}")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                default_idx = (df_columns.index(auto) + 1) if auto and auto in df_columns else 0
+                sku_col = st.selectbox(
+                    "Select from file columns",
+                    ["-- pick a column --"] + df_columns,
+                    index=default_idx
                 )
-                selected_header_row = row_number - 1  # Convert to 0-indexed
-                st.session_state.selected_header_row = selected_header_row
-            
-            # Show what columns will be read
-            with col2:
-                if selected_header_row is not None:
-                    try:
-                        temp_preview = pd.read_excel(
-                            vendor_file, 
-                            sheet_name=selected_sheet, 
-                            header=selected_header_row,
-                            nrows=1
-                        )
-                        col_count = len(temp_preview.columns)
-                        st.success(f"Row {row_number} selected - Found {col_count} columns")
-                    except:
-                        st.info(f"Row {row_number} selected")
-        
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
-    
-    # SKU Column Selection - DYNAMIC
-    sku_column_selected = None
-    if vendor_file and selected_sheet and st.session_state.selected_header_row is not None:
+                if sku_col == "-- pick a column --":
+                    sku_col = None
+
+            with c2:
+                custom = st.text_input("Or type column name manually", placeholder="e.g. Model Number")
+                if custom.strip():
+                    sku_col = custom.strip()
+
+            if sku_col:
+                st.info(f"Will use column: {sku_col}")
+        except Exception as exc:
+            st.error(f"Error reading columns: {exc}")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SECTION 6 – Show which image columns were found in the file
+    # ══════════════════════════════════════════════════════════════════════
+    if vendor_file and selected_sheet and header_row is not None:
         try:
+            tmp = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=header_row, nrows=0)
+            found = _columns_present(tmp, KNOWN_IMAGE_COLUMNS)
+
             st.markdown("---")
-            st.markdown("### Step 2: Select SKU Column")
-            st.write("Which column contains the product SKU/Item Number?")
-            
-            # Read with the selected header row to get actual columns
-            temp_df = pd.read_excel(
-                vendor_file, 
-                sheet_name=selected_sheet, 
-                header=st.session_state.selected_header_row, 
-                nrows=0
-            )
-            available_columns = [str(col) for col in temp_df.columns]
-            st.session_state.available_columns = available_columns
-            
-            # Common SKU column names for auto-detection
-            common_sku_names = [
-                'SKU', 'sku', 'Sku', 'SKU Number',
-                'Model Number', 'model_number', 'Model_Number', 'MODEL_NUMBER',
-                'Item Number', 'item_number', 'Item_Number', 'ITEM_NUMBER',
-                'Item Num', 'item_num', 'Item_Num',
-                'Product Code', 'product_code', 'Product_Code',
-                'Product Number', 'product_number',
-                'Part Number', 'part_number', 'Part_Number',
-                'Item Code', 'item_code', 'Item_Code',
-                'Article Number', 'article_number',
-                'Catalog Number', 'catalog_number',
-                'Material Number', 'material_number',
-                'Style Number', 'style_number'
-            ]
-            
-            # Try to auto-detect
-            auto_detected = None
-            for common_name in common_sku_names:
-                if common_name in available_columns:
-                    auto_detected = common_name
-                    break
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Dropdown with ONLY actual columns from file
-                default_index = 0
-                if auto_detected and auto_detected in available_columns:
-                    default_index = available_columns.index(auto_detected) + 1
-                
-                sku_column_selected = st.selectbox(
-                    "Select SKU Column",
-                    options=["-- Select Column --"] + available_columns,
-                    index=default_index,
-                    help="Choose the column that contains product identifiers"
-                )
-                
-                if sku_column_selected != "-- Select Column --":
-                    st.session_state.sku_column = sku_column_selected
-                else:
-                    sku_column_selected = None
-            
-            with col2:
-                st.info(f"Total columns found: {len(available_columns)}")
-                st.write("Auto-detect: " + (f"Detected '{auto_detected}'" if auto_detected else "No match found"))
-        
-        except Exception as e:
-            st.error(f"Error reading columns: {e}")
-    
-    # ====== ADVANCED COLUMN AUTO-DETECTION ======
-    detected_image_columns = []
-    detected_pdf_columns = []
-    
-    if vendor_file and selected_sheet and st.session_state.selected_header_row is not None:
-        try:
-            st.markdown("---")
-            st.markdown("### Step 3: Auto-Detect Image & PDF Columns")
-            st.write("Advanced AI-powered column detection using intelligent pattern matching")
-            
-            # Read full data for detection
-            full_df = pd.read_excel(
-                vendor_file, 
-                sheet_name=selected_sheet, 
-                header=st.session_state.selected_header_row
-            )
-            
-            # Run advanced detection
-            detection_result = detector.detect_all_columns(full_df)
-            detected_columns = detection_result['detected_columns']
-            summary = detection_result['summary']
-            
-            # Store in session state
-            st.session_state.detected_columns = detected_columns
-            
-            if detected_columns:
-                # Show summary
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Images Found", summary['images'])
-                with col2:
-                    st.metric("PDFs Found", summary['pdfs'])
-                with col3:
-                    st.metric("Total Assets", summary['total'])
-                with col4:
-                    st.metric("Avg Confidence", f"{summary['confidence_avg']}%")
-                
-                # Show detected columns with details
-                st.markdown("#### Detected Columns:")
-                
-                for idx, detection in enumerate(detected_columns):
-                    with st.expander(
-                        f"{detection['column_name']} - {detection['type'].upper()} ({detection['confidence']:.0f}% confidence)",
-                        expanded=(idx == 0)
-                    ):
-                        col1, col2 = st.columns([2, 1])
-                        
-                        with col1:
-                            st.write("**Type:**", detection['type'])
-                            st.write("**Category:**", detection['category'] or 'Auto')
-                            st.write("**Confidence:**", f"{detection['confidence']:.1f}%")
-                            
-                            if detection['reasoning']:
-                                with st.expander("Detection reasoning (click to expand)", expanded=False):
-                                    for reason in detection['reasoning']:
-                                        st.write(f"• {reason}")
-                        
-                        with col2:
-                            # Show sample data
-                            sample_values = full_df[detection['column_name']].dropna().head(3).tolist()
-                            if sample_values:
-                                st.write("**Sample data:**")
-                                for val in sample_values:
-                                    val_str = str(val)[:50]
-                                    st.write(f"• {val_str}")
-                
-                # Separate detected columns by type
-                detected_image_columns = [d for d in detected_columns if d['type'] == 'image']
-                detected_pdf_columns = [d for d in detected_columns if d['type'] == 'pdf']
-                
-                # Manual adjustment section
-                st.markdown("---")
-                st.markdown("#### Column Management")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                # Remove columns
-                with col1:
-                    st.write("**Remove Columns (Uncheck to exclude):**")
-                    columns_to_remove = []
-                    
-                    if detected_image_columns:
-                        st.write("*Images:*")
-                        for col_def in detected_image_columns:
-                            col_name = col_def['column_name']
-                            if not st.checkbox(f"  ✓ {col_name}", value=True, key=f"keep_img_{col_name}"):
-                                columns_to_remove.append(col_name)
-                    
-                    if detected_pdf_columns:
-                        st.write("*PDFs:*")
-                        for col_def in detected_pdf_columns:
-                            col_name = col_def['column_name']
-                            if not st.checkbox(f"  ✓ {col_name}", value=True, key=f"keep_pdf_{col_name}"):
-                                columns_to_remove.append(col_name)
-                
-                # Add columns
-                with col2:
-                    st.write("**Add Missing Columns:**")
-                    additional_image_col = st.selectbox(
-                        "Add image column",
-                        options=["-- None --"] + [c for c in available_columns if c not in [d['column_name'] for d in detected_image_columns]],
-                        key="manual_image_col"
-                    )
-                    if additional_image_col != "-- None --":
-                        detected_image_columns.append({
-                            'column_name': additional_image_col,
-                            'type': 'image',
-                            'confidence': 50,
-                            'category': 'media',
-                            'reasoning': ['Manually added']
-                        })
-                
-                with col3:
-                    additional_pdf_col = st.selectbox(
-                        "Add PDF column",
-                        options=["-- None --"] + [c for c in available_columns if c not in [d['column_name'] for d in detected_pdf_columns]],
-                        key="manual_pdf_col"
-                    )
-                    if additional_pdf_col != "-- None --":
-                        detected_pdf_columns.append({
-                            'column_name': additional_pdf_col,
-                            'type': 'pdf',
-                            'confidence': 50,
-                            'category': 'document',
-                            'reasoning': ['Manually added']
-                        })
-                
-                # Remove unchecked columns
-                detected_image_columns = [d for d in detected_image_columns if d['column_name'] not in columns_to_remove]
-                detected_pdf_columns = [d for d in detected_pdf_columns if d['column_name'] not in columns_to_remove]
-                
-                st.session_state.detected_image_columns = detected_image_columns
-                st.session_state.detected_pdf_columns = detected_pdf_columns
-            
+            st.markdown("### Image / PDF Columns Detected in Your File")
+
+            if found:
+                # show counts per category
+                families = {}
+                for col in found:
+                    fam = KNOWN_IMAGE_COLUMNS[col][0]
+                    families.setdefault(fam, []).append(col)
+
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric("Main Image",     len(families.get("main_product_image", [])))
+                with c2:
+                    st.metric("Media Columns",  len(families.get("media", [])))
+                with c3:
+                    st.metric("Spec Sheets",    len(families.get("spec_sheet", [])))
+                with c4:
+                    st.metric("Install Sheets", len(families.get("install_sheet", [])))
+
+                with st.expander("Full column list", expanded=False):
+                    for col in found:
+                        fam, folder, mtype = KNOWN_IMAGE_COLUMNS[col]
+                        st.write(f"  {col}  ->  family={fam}, folder={folder}, mediatype={mtype}")
             else:
-                st.warning("No image or PDF columns detected. Please check your file structure or manually select columns below.")
-        
-        except Exception as e:
-            st.error(f"Error in auto-detection: {e}")
-            import traceback
-            st.code(traceback.format_exc())
-    
-    # Status indicators
+                st.warning("None of the known image/PDF columns were found in this sheet.")
+        except Exception:
+            pass
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SECTION 7 – Status bar
+    # ══════════════════════════════════════════════════════════════════════
     st.markdown("---")
-    st.markdown("### Status")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        if vendor_name and mfg_prefix and brand_folder:
-            st.success("Config: Ready")
-        else:
-            st.warning("Config: Incomplete")
-    
-    with col2:
-        if vendor_file:
-            st.success("File: Uploaded")
-        else:
-            st.warning("File: Missing")
-    
-    with col3:
-        if selected_sheet:
-            st.success("Sheet: Selected")
-        else:
-            st.warning("Sheet: Select")
-    
-    with col4:
-        if template_file:
-            st.success("Template: Ready")
-        else:
-            st.warning("Template: Missing")
-    
-    # Process button
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        (st.success if (vendor_name and mfg_prefix and brand_folder) else st.warning)("Config")
+    with c2:
+        (st.success if vendor_file   else st.warning)("Vendor File")
+    with c3:
+        (st.success if selected_sheet else st.warning)("Sheet")
+    with c4:
+        (st.success if sku_col        else st.warning)("SKU Column")
+    with c5:
+        (st.success if template_file  else st.warning)("Template")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SECTION 8 – Generate
+    # ══════════════════════════════════════════════════════════════════════
     st.markdown("---")
-    can_process = all([
-        vendor_file, 
-        template_file, 
-        vendor_name, 
-        mfg_prefix, 
-        brand_folder, 
-        selected_sheet, 
-        sku_column_selected and sku_column_selected != "-- Select Column --",
-        st.session_state.selected_header_row is not None
-    ])
-    
-    if st.button("Generate Asset Template", disabled=not can_process, use_container_width=True, type="primary"):
-        with st.spinner("Processing..."):
+    ready = all([vendor_file, template_file, vendor_name, mfg_prefix, brand_folder, selected_sheet, sku_col, header_row is not None])
+
+    if st.button("Generate Asset Template", disabled=not ready, use_container_width=True, type="primary"):
+        with st.spinner("Processing …"):
             try:
-                # Read vendor data with selected header row
-                df = pd.read_excel(
-                    vendor_file, 
-                    sheet_name=selected_sheet, 
-                    header=st.session_state.selected_header_row
-                )
-                st.info(f"Processing {len(df)} rows from: {selected_sheet} (Header row: {st.session_state.selected_header_row + 1})")
-                
-                # Get detected columns from session state
-                detected_image_cols = st.session_state.get('detected_image_columns', [])
-                detected_pdf_cols = st.session_state.get('detected_pdf_columns', [])
-                
-                # Process with detected columns
-                output_df, flags, error = process_vendor_file(
-                    df, 
-                    mfg_prefix, 
-                    brand_folder, 
-                    sku_column_selected,
-                    detected_image_cols=detected_image_cols,
-                    detected_pdf_cols=detected_pdf_cols
-                )
-                
-                if error:
-                    st.error(error)
+                df = pd.read_excel(vendor_file, sheet_name=selected_sheet, header=header_row)
+                st.info(f"Read {len(df)} rows  |  sheet = {selected_sheet}  |  header row = {header_row + 1}")
+
+                output_df, log = _process(df, mfg_prefix, brand_folder, sku_col)
+
+                if output_df is None or len(output_df) == 0:
+                    st.error("No assets were generated. Check the log for details.")
+                    st.text(log)
                 else:
-                    st.success(f"Created {len(output_df)} assets successfully")
-                    
-                    # Metrics
+                    st.success(f"Generated {len(output_df)} asset rows")
+
+                    # metrics
                     st.markdown("---")
-                    st.markdown("### Results")
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.metric("Total Assets", len(output_df))
-                    
-                    with col2:
-                        main = len(output_df[output_df['assetFamilyIdentifier'] == 'main_product_image'])
-                        st.metric("Main Images", main)
-                    
-                    with col3:
-                        media = len(output_df[output_df['assetFamilyIdentifier'] == 'media'])
-                        st.metric("Media Assets", media)
-                    
-                    with col4:
-                        pdfs = len(output_df[output_df['assetFamilyIdentifier'].isin(['spec_sheet', 'install_sheet'])])
-                        st.metric("Documents", pdfs)
-                    
-                    # Preview
-                    with st.expander("View Generated Data"):
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1:
+                        st.metric("Total Assets",  len(output_df))
+                    with c2:
+                        st.metric("Main Images",   int((output_df["assetFamilyIdentifier"] == "main_product_image").sum()))
+                    with c3:
+                        st.metric("Media",         int((output_df["assetFamilyIdentifier"] == "media").sum()))
+                    with c4:
+                        st.metric("PDFs",          int(output_df["assetFamilyIdentifier"].isin(["spec_sheet","install_sheet"]).sum()))
+
+                    with st.expander("Preview (first 20 rows)"):
                         st.dataframe(output_df.head(20), use_container_width=True)
-                    
-                    # Download
+
+                    # downloads
                     st.markdown("---")
-                    st.markdown("### Download Results")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        output_excel = io.BytesIO()
-                        with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
-                            output_df.to_excel(writer, sheet_name='Sheet1', index=False)
-                        output_excel.seek(0)
-                        
-                        st.download_button(
-                            "Download Asset Template (Excel)",
-                            data=output_excel,
-                            file_name=f"{vendor_name}_Asset_Template.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True,
-                            type="primary"
-                        )
-                    
-                    with col2:
-                        log = f"Processing Log - {vendor_name}\n{'='*50}\n{flags}"
-                        st.download_button(
-                            "Download Log (Text)",
-                            data=log,
-                            file_name=f"{vendor_name}_log.txt",
-                            mime="text/plain",
-                            use_container_width=True
-                        )
-            
-            except Exception as e:
-                st.error(f"Error: {e}")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        buf = io.BytesIO()
+                        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                            output_df.to_excel(w, sheet_name="Sheet1", index=False)
+                        buf.seek(0)
+                        st.download_button("Download Asset Template",
+                                           data=buf,
+                                           file_name=f"{vendor_name}_Asset_Template.xlsx",
+                                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                           use_container_width=True, type="primary")
+                    with c2:
+                        st.download_button("Download Processing Log",
+                                           data=log,
+                                           file_name=f"{vendor_name}_log.txt",
+                                           mime="text/plain",
+                                           use_container_width=True)
+            except Exception as exc:
+                st.error(str(exc))
                 st.code(traceback.format_exc())
 
-def process_vendor_file(df, mfg_prefix, brand_folder, sku_column, detected_image_cols=None, detected_pdf_cols=None):
+
+# ---------------------------------------------------------------------------
+# Core processing – produces the 6-column output that matches your template
+# ---------------------------------------------------------------------------
+def _process(df: pd.DataFrame, mfg_prefix: str, brand_folder: str, sku_col: str):
     """
-    Process vendor data following EXACT Belami Asset Template rules.
-    
-    Output columns (ONLY 6):
-    - code: manufacturer_prefix_filename_postfix (all lowercase)
-    - label-en_US: same as code
-    - product_reference: full SKU
-    - imagelink: full path with brand folder
-    - assetFamilyIdentifier: main_product_image, media, spec_sheet, install_sheet
-    - mediatype: lifestyle, dimension, detail, angle, informational, swatch (empty for main/spec/install)
+    Returns (output_df, log_text).
+    output_df has exactly 6 columns in this order:
+        code | label-en_US | product_reference | imagelink | assetFamilyIdentifier | mediatype
     """
-    
-    if sku_column not in df.columns:
-        return None, None, f"SKU column '{sku_column}' not found in the data"
-    
-    output_rows = []
-    flags = []
-    skipped_rows = []
-    processed_skus = set()
-    
-    # Build mappings from detected columns
-    image_mappings = {}
-    if detected_image_cols:
-        for col_def in detected_image_cols:
-            col_name = col_def['column_name']
-            category = col_def.get('category', 'media')
-            image_mappings[col_name] = category
-    
-    pdf_mappings = {}
-    if detected_pdf_cols:
-        for col_def in detected_pdf_cols:
-            col_name = col_def['column_name']
-            category = col_def.get('category', 'document')
-            pdf_mappings[col_name] = category
-    
-    main_count = 0
-    media_count = 0
-    spec_count = 0
-    install_count = 0
-    row_count = 0
-    
-    flags.append("=== BELAMI ASSET TEMPLATE GENERATION ===")
-    flags.append(f"Manufacturer Prefix: {mfg_prefix}")
-    flags.append(f"Brand Folder: {brand_folder}")
-    flags.append(f"Image Columns Detected: {len(image_mappings)}")
-    for col in image_mappings.keys():
-        flags.append(f"  • {col}")
-    flags.append(f"PDF Columns Detected: {len(pdf_mappings)}")
-    for col in pdf_mappings.keys():
-        flags.append(f"  • {col}")
-    flags.append("")
-    
-    # Process each row
-    for idx, row in df.iterrows():
-        row_count += 1
-        current_sku = None
-        
-        # Extract and validate SKU
-        try:
-            sku_value = row[sku_column]
-            if pd.isna(sku_value):
-                skipped_rows.append(f"Row {idx+1}: SKU is empty")
-                continue
-            
-            current_sku = str(sku_value).strip()
-            if not current_sku or current_sku.lower() == 'nan':
-                skipped_rows.append(f"Row {idx+1}: SKU is empty after cleaning")
-                continue
-            
-        except Exception as e:
-            skipped_rows.append(f"Row {idx+1}: Error reading SKU - {str(e)}")
+    log_lines = []
+    log_lines.append("=== BELAMI ASSET TEMPLATE GENERATION LOG ===")
+    log_lines.append(f"Manufacturer Prefix : {mfg_prefix}")
+    log_lines.append(f"Brand Folder        : {brand_folder}")
+    log_lines.append(f"SKU Column          : {sku_col}")
+    log_lines.append("")
+
+    # ── validate SKU column exists ────────────────────────────────────────
+    # normalise: compare lowered column names in case of case mismatch
+    col_str_map = {str(c): c for c in df.columns}          # str -> original key
+    col_lower_map = {str(c).lower(): str(c) for c in df.columns}
+
+    actual_sku_col = None
+    if sku_col in col_str_map:
+        actual_sku_col = sku_col
+    elif sku_col.lower() in col_lower_map:
+        actual_sku_col = col_lower_map[sku_col.lower()]
+
+    if actual_sku_col is None:
+        log_lines.append(f"ERROR: SKU column '{sku_col}' not found.")
+        log_lines.append(f"Available columns: {list(col_str_map.keys())}")
+        return None, "\n".join(log_lines)
+
+    log_lines.append(f"Using SKU column    : {actual_sku_col}")
+
+    # ── figure out which known image columns exist in this file ───────────
+    present_image_cols = _columns_present(df, KNOWN_IMAGE_COLUMNS)
+    log_lines.append(f"Image/PDF columns found ({len(present_image_cols)}): {present_image_cols}")
+    log_lines.append("")
+
+    # ── iterate rows ──────────────────────────────────────────────────────
+    rows_out = []
+    skipped = []
+    seen_codes = set()          # deduplicate on generated code
+
+    for row_idx, row in df.iterrows():
+        # --- extract SKU --------------------------------------------------
+        raw_sku = row[actual_sku_col]
+        if pd.isna(raw_sku) or str(raw_sku).strip() == "":
+            skipped.append(f"Row {row_idx+2}: empty SKU")
             continue
-        
-        # Skip duplicate SKUs
-        if current_sku in processed_skus:
-            skipped_rows.append(f"Row {idx+1}: Duplicate SKU {current_sku}")
-            continue
-        
-        processed_skus.add(current_sku)
-        
-        # Process image columns
-        first_image = True
-        for col_name in image_mappings.keys():
-            if col_name not in df.columns:
+        sku = str(raw_sku).strip()
+
+        product_ref = f"{mfg_prefix}_{sku}"
+
+        # --- iterate every known image/pdf column that exists --------------
+        for col_name in present_image_cols:
+            cell = row[col_name]
+            if pd.isna(cell) or str(cell).strip() == "":
                 continue
-            
-            try:
-                img_value = row[col_name]
-                if pd.isna(img_value) or str(img_value).strip() == '':
-                    continue
-                
-                filename = str(img_value).strip()
-                filename_lower = filename.lower()
-                
-                # Skip videos
-                if any(ext in filename_lower for ext in ['.mp4', '.mov', '.avi', '.wmv']) or 'youtube' in filename_lower or 'vimeo' in filename_lower:
-                    continue
-                
-                # Get file extension
-                file_ext = Path(filename).suffix.lower()
-                valid_image_ext = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', '.svg']
-                
-                if file_ext not in valid_image_ext:
-                    continue
-                
-                # Get filename without extension (lowercase)
-                base_name = Path(filename).stem.lower()
-                
-                # Clean filename (replace spaces/special chars with underscore)
-                special_chars = [' ', ',', '/', '\\', '(', ')', '[', ']', '{', '}', '&', '#', '@', '!', '*', '+', '=', '%', '$', '^', '~', '`', ';', ':', '"', "'", '<', '>', '?', '|', '.']
-                base_name_clean = base_name
-                for char in special_chars:
-                    base_name_clean = base_name_clean.replace(char, '_')
-                
-                # Remove multiple underscores
-                while '__' in base_name_clean:
-                    base_name_clean = base_name_clean.replace('__', '_')
-                base_name_clean = base_name_clean.strip('_')
-                
-                # Determine asset type
-                if first_image and image_mappings[col_name] != 'media_lifestyle':
-                    # First image is main product image
-                    asset_family = 'main_product_image'
-                    media_type = ''
-                    code = f"{mfg_prefix}_{base_name_clean}_new_1k"
-                    imagelink = f"{brand_folder}/products/{base_name_clean}_new_1k.jpg"
-                    main_count += 1
-                    first_image = False
-                else:
-                    # Other images are media
-                    asset_family = 'media'
-                    
-                    # Map category to mediatype
-                    category = image_mappings[col_name]
-                    if category == 'media_lifestyle':
-                        media_type = 'lifestyle'
-                    elif category == 'media_angle':
-                        media_type = 'angle'
-                    elif category == 'media_infographic':
-                        media_type = 'informational'
-                    elif category == 'media_dimension':
-                        media_type = 'dimension'
-                    elif category == 'media_swatch':
-                        media_type = 'swatch'
-                    else:
-                        media_type = 'detail'
-                    
-                    code = f"{mfg_prefix}_{base_name_clean}_new_1k"
-                    imagelink = f"{brand_folder}/media/{base_name_clean}_new_1k.jpg"
-                    media_count += 1
-                
-                # Create row with ONLY 6 columns
-                output_rows.append({
-                    'code': code,
-                    'label-en_US': code,
-                    'product_reference': current_sku,
-                    'imagelink': imagelink,
-                    'assetFamilyIdentifier': asset_family,
-                    'mediatype': media_type
+
+            filename = str(cell).strip()                  # e.g. "ALDF12LAJUDBK_App.jpg"
+            stem    = Path(filename).stem                  # "ALDF12LAJUDBK_App"
+            ext     = Path(filename).suffix.lower()        # ".jpg"
+
+            fam, folder, mtype = KNOWN_IMAGE_COLUMNS[col_name]
+
+            # ── VIDEO handling ──────────────────────────────────────────
+            if _is_video(filename):
+                # Videos are kept exactly: code = prefix_cleanedname (no _new_1k)
+                # imagelink = brand/media/OriginalName.ext  (original case)
+                code = f"{mfg_prefix}_{_clean_code(stem)}"
+                if code in seen_codes:
+                    continue                              # brand video repeats per SKU – keep only first
+                seen_codes.add(code)
+                rows_out.append({
+                    "code":                   code,
+                    "label-en_US":            code,
+                    "product_reference":      product_ref,
+                    "imagelink":              f"{brand_folder}/media/{filename}",
+                    "assetFamilyIdentifier":  "media",
+                    "mediatype":              "detail",
                 })
-            
-            except Exception as e:
-                flags.append(f"Error processing image column {col_name} for SKU {current_sku}: {str(e)}")
                 continue
-        
-        # Process PDF columns
-        for col_name in pdf_mappings.keys():
-            if col_name not in df.columns:
-                continue
-            
-            try:
-                pdf_value = row[col_name]
-                if pd.isna(pdf_value) or str(pdf_value).strip() == '':
+
+            # ── PDF handling ────────────────────────────────────────────
+            if _is_pdf(filename):
+                # code   = prefix_cleanedStem_specs
+                # imagelink = brand/specsheets/OriginalStem_new.pdf
+                code = f"{mfg_prefix}_{_clean_code(stem)}_specs"
+                if code in seen_codes:
                     continue
-                
-                filename = str(pdf_value).strip()
-                filename_lower = filename.lower()
-                file_ext = Path(filename).suffix.lower()
-                
-                if file_ext != '.pdf':
-                    continue
-                
-                # Get filename without extension (lowercase)
-                base_name = Path(filename).stem.lower()
-                
-                # Clean filename
-                special_chars = [' ', ',', '/', '\\', '(', ')', '[', ']', '{', '}', '&', '#', '@', '!', '*', '+', '=', '%', '$', '^', '~', '`', ';', ':', '"', "'", '<', '>', '?', '|', '.']
-                base_name_clean = base_name
-                for char in special_chars:
-                    base_name_clean = base_name_clean.replace(char, '_')
-                
-                while '__' in base_name_clean:
-                    base_name_clean = base_name_clean.replace('__', '_')
-                base_name_clean = base_name_clean.strip('_')
-                
-                # Determine PDF type
-                category = pdf_mappings[col_name]
-                if category == 'install_sheet':
-                    asset_family = 'install_sheet'
-                    spec_type = 'install_sheet'
-                    install_count += 1
-                elif category == 'technical_drawing':
-                    asset_family = 'spec_sheet'
-                    spec_type = 'spec_sheet'
-                    spec_count += 1
-                else:
-                    asset_family = 'spec_sheet'
-                    spec_type = 'spec_sheet'
-                    spec_count += 1
-                
-                code = f"{mfg_prefix}_{base_name_clean}_specs"
-                imagelink = f"{brand_folder}/specsheets/{base_name_clean}_new.pdf"
-                
-                # Create row with ONLY 6 columns
-                output_rows.append({
-                    'code': code,
-                    'label-en_US': code,
-                    'product_reference': current_sku,
-                    'imagelink': imagelink,
-                    'assetFamilyIdentifier': asset_family,
-                    'mediatype': ''
+                seen_codes.add(code)
+                rows_out.append({
+                    "code":                   code,
+                    "label-en_US":            code,
+                    "product_reference":      product_ref,
+                    "imagelink":              f"{brand_folder}/specsheets/{stem}_new.pdf",
+                    "assetFamilyIdentifier":  fam,
+                    "mediatype":              "",
                 })
-            
-            except Exception as e:
-                flags.append(f"Error processing PDF column {col_name} for SKU {current_sku}: {str(e)}")
                 continue
-    
-    # Generate summary
-    flags.append("")
-    flags.append("=== PROCESSING SUMMARY ===")
-    flags.append(f"Total rows processed: {row_count}")
-    flags.append(f"SKUs with assets: {len(processed_skus)}")
-    flags.append(f"Total assets created: {len(output_rows)}")
-    flags.append(f"  • Main product images: {main_count}")
-    flags.append(f"  • Media assets: {media_count}")
-    flags.append(f"  • Spec sheets: {spec_count}")
-    flags.append(f"  • Install sheets: {install_count}")
-    
-    if skipped_rows:
-        flags.append("")
-        flags.append(f"=== SKIPPED ROWS ({len(skipped_rows)}) ===")
-        for skip in skipped_rows[:15]:
-            flags.append(skip)
-        if len(skipped_rows) > 15:
-            flags.append(f"... and {len(skipped_rows) - 15} more")
-    
-    # Create output DataFrame with ONLY 6 columns in correct order
-    if output_rows:
-        output_df = pd.DataFrame(output_rows)
-        output_df = output_df[['code', 'label-en_US', 'product_reference', 'imagelink', 'assetFamilyIdentifier', 'mediatype']]
+
+            # ── IMAGE handling ──────────────────────────────────────────
+            # code      = prefix_cleanedStem_new_1k        (all lowercase)
+            # imagelink = brand/folder/OriginalStem_new_1k.jpg  (original case stem)
+            code = f"{mfg_prefix}_{_clean_code(stem)}_new_1k"
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+
+            rows_out.append({
+                "code":                   code,
+                "label-en_US":            code,
+                "product_reference":      product_ref,
+                "imagelink":              f"{brand_folder}/{folder}/{stem}_new_1k.jpg",
+                "assetFamilyIdentifier":  fam,
+                "mediatype":              mtype,
+            })
+
+    # ── summary ───────────────────────────────────────────────────────────
+    if rows_out:
+        output_df = pd.DataFrame(rows_out)[
+            ["code", "label-en_US", "product_reference", "imagelink", "assetFamilyIdentifier", "mediatype"]
+        ]
     else:
-        output_df = pd.DataFrame(columns=['code', 'label-en_US', 'product_reference', 'imagelink', 'assetFamilyIdentifier', 'mediatype'])
-    
-    return output_df, "\n".join(flags), None
+        output_df = pd.DataFrame(
+            columns=["code", "label-en_US", "product_reference", "imagelink", "assetFamilyIdentifier", "mediatype"]
+        )
 
+    log_lines.append("=== SUMMARY ===")
+    log_lines.append(f"Total output rows     : {len(output_df)}")
+    log_lines.append(f"main_product_image    : {int((output_df['assetFamilyIdentifier']=='main_product_image').sum())}")
+    log_lines.append(f"media                 : {int((output_df['assetFamilyIdentifier']=='media').sum())}")
+    log_lines.append(f"spec_sheet            : {int((output_df['assetFamilyIdentifier']=='spec_sheet').sum())}")
+    log_lines.append(f"install_sheet         : {int((output_df['assetFamilyIdentifier']=='install_sheet').sum())}")
+    if skipped:
+        log_lines.append(f"\nSkipped rows ({len(skipped)}):")
+        for s in skipped[:20]:
+            log_lines.append(f"  {s}")
+        if len(skipped) > 20:
+            log_lines.append(f"  … and {len(skipped)-20} more")
 
+    return output_df, "\n".join(log_lines)
